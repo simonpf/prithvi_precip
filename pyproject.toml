@@ -1,0 +1,37 @@
+[project]
+name = "prithvi_precip"
+version = "0.0.1"
+description = "prithvi_precip: Precipitation forecasting using the Prithvi-WxC foundation model."
+authors = [{name="Simon Pfreundschuh", email="simon.pfreundschuh@colostate.edu"}]
+keywords = ["weather", "climate", "remote sensing"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "click",
+    "numpy",
+    "xarray",
+    "matplotlib",
+    "torch >= 2.2",
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {""="src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
