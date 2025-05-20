@@ -103,6 +103,8 @@ def load_position_signal(data_dir: Path) -> xr.Dataset:
         longitude coordinates expected by the Prithvi-WxC model.
     """
     static_data = load_static_data(data_dir)
+    lons = np.deg2rad(static_data.longitude.data)
+    lats = np.deg2rad(static_data.latitude.data)
     lons = static_data.longitude.data
     lats = static_data.latitude.data
     lons, lats = np.meshgrid(lons, lats, indexing="xy")

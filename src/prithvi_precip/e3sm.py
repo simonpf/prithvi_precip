@@ -221,6 +221,9 @@ def load_dynamic_data(
 class E3SMS2SDataset(Dataset):
     """
     A data loader class for regional S2S precipitation forecasts using E3SM climate-model data.
+
+    The dataset expects a folder containing one or multiple NetCDF4 files containing the E3SM input
+    data.
     """
     def __init__(
             self,
@@ -235,6 +238,13 @@ class E3SMS2SDataset(Dataset):
             data_dir: The directory containign the training data.
             static_data_dir: The directory containing the static input data
                 (climatology, static MERRA fields).
+            forecast_range: A tuple [t_min, t_max) defining a half-closed interval for targeted
+                forecast range in days. The lead time of each sample is sampled randomly from this
+                interval.
+            roi: A tuple (lon, lat) defining the center coordinate of the 20 x 20 px prediction region.
+            precip_climatology: An optional path pointing to a NetCDF4 file containing a precipitation
+                climatology to use to calculate anomalies. If not provided, anomalies are calculated
+                on-the-fly at the beginning of the training.
         """
         super().__init__()
         self.data_dir = Path(data_dir)
@@ -251,6 +261,9 @@ class E3SMS2SDataset(Dataset):
 
     @cached_property
     def data_files(self):
+        """
+        List of all input data files.
+        """
         return sorted(list(self.data_dir.glob("*.nc")))
 
     @cached_property
@@ -276,20 +289,29 @@ class E3SMS2SDataset(Dataset):
 
     @cached_property
     def sample_counts(self) -> np.ndarray:
+        """
+        The index of the first sample in each input file.
+        """
         return np.array([cts[0] for cts in self.all_time_steps.keys()])
 
     @cached_property
     def sample_keys(self) -> np.ndarray:
+        """
+        List of tuple describing the sample range for each data file.
+
+
+        """
         return list(self.all_time_steps.keys())
 
     @cached_property
     def roi_bounds(self) -> Dict[str, slice]:
+        """
+        A dictionary defining the lons and lat slices defining the target area.
+        """
         inpt_file = next(iter(self.all_time_steps.values()))
         with xr.open_dataset(inpt_file) as data:
             lons = data.lon.data
             lats = data.lat.data
-
-        print(lons, lats)
 
         lon_c, lat_c = self.roi
         if lon_c < 0:
@@ -310,7 +332,9 @@ class E3SMS2SDataset(Dataset):
 
     @property
     def precip_climatology(self):
-
+        """
+        The precipitation climatology field.
+        """
         if isinstance(self._precip_climatology, Path):
             with xr.open_dataset(precip_climatology) as data:
                 self._precip_climatology = data.PRECT.data
