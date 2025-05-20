@@ -4,6 +4,7 @@ prithvi_precip.e3sm
 
 Provides conversion function to convert E3SM model output to corresponding MERRA fields.
 """
+
 from functools import cache, cached_property
 from datetime import datetime
 from pathlib import Path
@@ -16,16 +17,11 @@ import xarray as xr
 
 from torch.utils.data import Dataset
 
-from prithvi_precip.utils import (
-    load_static_input,
-    load_climatology
-)
+from prithvi_precip.utils import load_static_input, load_climatology
 
 
 def load_surface_climatology(
-        time: np.datetime64,
-        climatology_path: Path,
-        variables: Optional[List[None]] = None
+    time: np.datetime64, climatology_path: Path, variables: Optional[List[None]] = None
 ) -> xr.Dataset:
     """
     Load Prithvi-WxC surface-variable climatology data for a given time.
@@ -53,9 +49,7 @@ def load_surface_climatology(
 
 
 def load_vertical_climatology(
-        time: np.datetime64,
-        climatology_path: Path,
-        variables: Optional[List[None]] = None
+    time: np.datetime64, climatology_path: Path, variables: Optional[List[None]] = None
 ) -> xr.Dataset:
     """
     Load Prithvi-WxC profile-variable climatology data for a given time.
@@ -82,10 +76,7 @@ def load_vertical_climatology(
     return loaded
 
 
-def load_dynamic_data(
-        e3sm_data: xr.Dataset,
-        climatology_path: Path
-) -> xr.Dataset:
+def load_dynamic_data(e3sm_data: xr.Dataset, climatology_path: Path) -> xr.Dataset:
     """
     Loads dynamic data from E3SM data in the form expected from the Prithvi-WxC foundation model.
 
@@ -104,12 +95,12 @@ def load_dynamic_data(
     # GWETROOT from climatology
     gwetroot = clim_surf["GWETROOT"].data
     # HFLUX
-    hflux = e3sm_data["SHFLX"].data # lAI from climatology
+    hflux = e3sm_data["SHFLX"].data  # lAI from climatology
     lai = clim_surf["LAI"].data
     # LWGAB -> FLDS: Downwelling long-wave flux at surface
     lwgab = e3sm_data["FLDS"].data
     # LWGEM -> FLNS - FLDS: Upwelling long-wave flux at surface
-    lwgem = e3sm_data["FLDS"].data- e3sm_data["FLNS"].data
+    lwgem = e3sm_data["FLDS"].data - e3sm_data["FLNS"].data
     # LWTUP -> FLUT
     lwtup = e3sm_data["FLUT"].data
     # PS -> PS
@@ -150,10 +141,7 @@ def load_dynamic_data(
     tql_clim = np.trapz(ql_clim, x=-height, axis=0)
     ql = ql_clim * (tql / tql_clim)[None]
 
-    cloud = np.minimum(
-        qi / qi_clim.max(0)[None] + ql / ql_clim.max(0)[None],
-        1.0
-    )
+    cloud = np.minimum(qi / qi_clim.max(0)[None] + ql / ql_clim.max(0)[None], 1.0)
 
     qv_clim = np.flip(clim_vert["QV"].data, 0)
     tqv_clim = np.trapz(qv_clim, x=-height, axis=0)
@@ -184,38 +172,41 @@ def load_dynamic_data(
     v = v * (e3sm_data["V850"].data / np.maximum(v[10], 2.0))[None]
     v[3] = e3sm_data["V200"]
 
-    return np.concatenate([
-        eflux[None],
-        gwetroot[None],
-        hflux[None],
-        lai[None],
-        lwgab[None],
-        lwgem[None],
-        lwtup[None],
-        ps[None],
-        qv2m[None],
-        slp[None],
-        swgnt[None],
-        swtnt[None],
-        t2m[None],
-        tqi[None],
-        tql[None],
-        tqv[None],
-        ts[None],
-        u10m[None],
-        v10m[None],
-        z0m[None],
-        cloud,
-        height,
-        omega,
-        pl,
-        qi,
-        ql,
-        qv,
-        t,
-        u,
-        v
-    ], axis=0)
+    return np.concatenate(
+        [
+            eflux[None],
+            gwetroot[None],
+            hflux[None],
+            lai[None],
+            lwgab[None],
+            lwgem[None],
+            lwtup[None],
+            ps[None],
+            qv2m[None],
+            slp[None],
+            swgnt[None],
+            swtnt[None],
+            t2m[None],
+            tqi[None],
+            tql[None],
+            tqv[None],
+            ts[None],
+            u10m[None],
+            v10m[None],
+            z0m[None],
+            cloud,
+            height,
+            omega,
+            pl,
+            qi,
+            ql,
+            qv,
+            t,
+            u,
+            v,
+        ],
+        axis=0,
+    )
 
 
 class E3SMS2SDataset(Dataset):
@@ -225,13 +216,14 @@ class E3SMS2SDataset(Dataset):
     The dataset expects a folder containing one or multiple NetCDF4 files containing the E3SM input
     data.
     """
+
     def __init__(
-            self,
-            data_dir: Path,
-            static_data_dir: Optional[Path] = None,
-            forecast_range: Tuple[int, int] = (14, 21),
-            roi: Tuple[float, float] = (120, 45),
-            precip_climatology: Optional[Path] = None
+        self,
+        data_dir: Path,
+        static_data_dir: Optional[Path] = None,
+        forecast_range: Tuple[int, int] = (14, 21),
+        roi: Tuple[float, float] = (120, 45),
+        precip_climatology: Optional[Path] = None,
     ):
         """
         Args:
@@ -257,7 +249,6 @@ class E3SMS2SDataset(Dataset):
         self.rng = np.random.default_rng(42)
 
         self._precip_climatology = precip_climatology
-
 
     @cached_property
     def data_files(self):
@@ -325,10 +316,7 @@ class E3SMS2SDataset(Dataset):
         lat_start = cntr_lat - 10
         lat_end = cntr_lat + 10
 
-        return {
-            "lon": slice(lon_start, lon_end),
-            "lat": slice(lat_start, lat_end)
-        }
+        return {"lon": slice(lon_start, lon_end), "lat": slice(lat_start, lat_end)}
 
     @property
     def precip_climatology(self):
@@ -355,7 +343,6 @@ class E3SMS2SDataset(Dataset):
                         precip_cts += valid.sum(0)
             self._precip_climatology = precip_sum / precip_cts
         return self._precip_climatology
-
 
     def worker_init_fn(self, w_id: int) -> None:
         """
@@ -388,12 +375,30 @@ class E3SMS2SDataset(Dataset):
         forecast_range = self.rng.integers(*self.forecast_range)
 
         with xr.open_dataset(input_file) as data:
-            data = data[{"time": [index - start_index, index - start_index + 1, index + forecast_range]}].compute()
+            data = data[
+                {
+                    "time": [
+                        index - start_index,
+                        index - start_index + 1,
+                        index + forecast_range,
+                    ]
+                }
+            ].compute()
 
-        dynamic = torch.stack([
-            torch.tensor(load_dynamic_data(data[{"time": 0}], self.static_data_dir / "climatology")),
-            torch.tensor(load_dynamic_data(data[{"time": 1}], self.static_data_dir / "climatology")),
-        ])
+        dynamic = torch.stack(
+            [
+                torch.tensor(
+                    load_dynamic_data(
+                        data[{"time": 0}], self.static_data_dir / "climatology"
+                    )
+                ),
+                torch.tensor(
+                    load_dynamic_data(
+                        data[{"time": 1}], self.static_data_dir / "climatology"
+                    )
+                ),
+            ]
+        )
 
         init_time = np.datetime64(str(data.time.data[1]))
         target_time = np.datetime64(str(data.time.data[2]))
@@ -407,7 +412,6 @@ class E3SMS2SDataset(Dataset):
             "climate": torch.tensor(climate).to(dtype=torch.float32),
             "lead_time": torch.tensor(lead_time).to(dtype=torch.float32),
             "input_time": torch.tensor(24.0),
-
         }
 
         lon_bounds = self.roi_bounds["lon"]
@@ -415,10 +419,12 @@ class E3SMS2SDataset(Dataset):
         target = data[{"time": 2}][self.roi_bounds].PRECT.data * 1e3 * 3.6e3
         target = target - self.precip_climatology[lat_bounds, lon_bounds]
 
-        inpt.update({
-            "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
-            "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
-            "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
-        })
+        inpt.update(
+            {
+                "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
+                "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
+                "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
+            }
+        )
 
         return inpt, target

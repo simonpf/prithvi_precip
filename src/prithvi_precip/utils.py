@@ -4,6 +4,7 @@ prithvi_precip.utils
 
 Shared utility functions.
 """
+
 from datetime import datetime
 from functools import cache
 import logging
@@ -19,7 +20,20 @@ LOGGER = logging.getLogger(__name__)
 
 
 LEVELS = [
-    34.0, 39.0, 41.0, 43.0, 44.0, 45.0, 48.0, 51.0, 53.0, 56.0, 63.0, 68.0, 71.0, 72.0
+    34.0,
+    39.0,
+    41.0,
+    43.0,
+    44.0,
+    45.0,
+    48.0,
+    51.0,
+    53.0,
+    56.0,
+    63.0,
+    68.0,
+    71.0,
+    72.0,
 ]
 
 
@@ -43,30 +57,14 @@ SURFACE_VARS = [
     "TS",
     "U10M",
     "V10M",
-    "Z0M"
+    "Z0M",
 ]
 
 
-STATIC_SURFACE_VARS = [
-    "FRACI",
-    "FRLAND",
-    "FROCEAN",
-    "PHIS"
-]
+STATIC_SURFACE_VARS = ["FRACI", "FRLAND", "FROCEAN", "PHIS"]
 
 
-VERTICAL_VARS = [
-    "CLOUD",
-    "H",
-    "OMEGA",
-    "PL",
-    "QI",
-    "QL",
-    "QV",
-    "T",
-    "U",
-    "V"
-]
+VERTICAL_VARS = ["CLOUD", "H", "OMEGA", "PL", "QI", "QL", "QV", "T", "U", "V"]
 
 
 NAN_VALS = {
@@ -137,7 +135,9 @@ def load_climatology(time: np.datetime64, data_dir: Path) -> np.ndarray:
     data_sfc = np.stack(data_sfc)
 
     data_vert = []
-    vert_file = data_dir / "climatology" / f"climate_vertical_doy{doy:03}_hour{hod:02}.nc"
+    vert_file = (
+        data_dir / "climatology" / f"climate_vertical_doy{doy:03}_hour{hod:02}.nc"
+    )
     with xr.open_dataset(vert_file) as vert_data:
         for var in VERTICAL_VARS:
             data_vert.append(np.flip(vert_data[var].data.astype(np.float32), 0))
@@ -159,17 +159,14 @@ def load_static_input(time: np.datetime64, data_dir: Path) -> np.ndarray:
     Return:
         A numpy ndarray containing all dynamic data for the given
     """
-    LOGGER.debug(
-        "Loading static input from for time %s.",
-        time
-    )
+    LOGGER.debug("Loading static input from for time %s.", time)
     rel_time = time - time.astype("datetime64[Y]").astype(time.dtype)
     rel_time = np.datetime64("1980-01-01T00:00:00") + rel_time
     static_data = load_static_data(data_dir)
     static_data = static_data.interp(
         time=rel_time.astype("datetime64[ns]"),
         method="nearest",
-        kwargs={"fill_value": "extrapolate"}
+        kwargs={"fill_value": "extrapolate"},
     )
 
     pos_sig = load_position_signal(data_dir)
