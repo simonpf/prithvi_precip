@@ -41,7 +41,7 @@ def load_surface_climatology(
     climatology_path = Path(climatology_path)
     time = time.astype("datetime64[s]").item()
     start_of_year = datetime(year=time.year, month=1, day=1)
-    doy = (time - start_of_year).days + 1
+    doy = min((time - start_of_year).days + 1, 365)
     fname = f"climate_surface_doy{doy:03}_hour00.nc"
 
     with xr.open_dataset(climatology_path / fname) as data:
@@ -71,7 +71,7 @@ def load_vertical_climatology(
     climatology_path = Path(climatology_path)
     time = time.astype("datetime64[s]").item()
     start_of_year = datetime(year=time.year, month=1, day=1)
-    doy = (time - start_of_year).days + 1
+    doy = min((time - start_of_year).days + 1, 365)
     fname = f"climate_vertical_doy{doy:03}_hour00.nc"
 
     with xr.open_dataset(climatology_path / fname) as data:
@@ -288,6 +288,8 @@ class E3SMS2SDataset(Dataset):
         with xr.open_dataset(inpt_file) as data:
             lons = data.lon.data
             lats = data.lat.data
+
+        print(lons, lats)
 
         lon_c, lat_c = self.roi
         if lon_c < 0:
