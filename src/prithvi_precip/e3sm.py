@@ -317,7 +317,7 @@ class E3SMS2SDataset(Dataset):
             precip_cts = None
             files = list(self.all_time_steps.values())
 
-            for path in tqdm(files):
+            for path in tqdm(files, desc="Calculating precipitation climatology"):
                 with xr.open_dataset(path) as data:
                     precip = data.PRECT.data * 1e3 * 3.6e3
                     valid = np.isfinite(precip)
@@ -376,7 +376,7 @@ class E3SMS2SDataset(Dataset):
         lead_time = (target_time - init_time).astype("timedelta64[h]").astype("float32")
 
         inpt = {
-            "x": torch.tensor(dynamic).to(dtype=torch.float32),
+            "x": dynamic.to(dtype=torch.float32),
             "static": torch.tensor(static).to(dtype=torch.float32),
             "climate": torch.tensor(climate).to(dtype=torch.float32),
             "lead_time": torch.tensor(lead_time).to(dtype=torch.float32),

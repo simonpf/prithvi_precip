@@ -1,0 +1,18 @@
+name: prithvi_precip
+channels:
+  - nvidia
+  - conda-forge
+dependencies:
+    - python
+    - cftime
+    - jupyterlab
+    - matplotlib
+    - numpy
+    - xarray
+    - pip
+    - pip:
+        - "git+https://github.com/NASA-IMPACT/Prithvi-WxC"
+        - "git+https://github.com/simonpf/pytorch_retrieve"
+        - --extra-index-url https://download.pytorch.org/whl/cu118
+        - torchvision
+        - torchaudio
