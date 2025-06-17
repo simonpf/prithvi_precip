@@ -194,4 +194,4 @@ def load_static_input(time: np.datetime64, data_dir: Path) -> np.ndarray:
     for ind, var in enumerate(STATIC_SURFACE_VARS):
         data[n_pos + 4 + ind] = static_data[var].data
 
-    return data
+    return data.astype(np.float32)
