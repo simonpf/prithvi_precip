@@ -6,7 +6,7 @@ Command line interface for extracting training and verification data for the Pri
 """
 import click
 
-from prithvi_precip.data import imerg, merra2_precip, era5_precip, mrms, spc
+from prithvi_precip.data import imerg, merra2_precip, era5_precip, mrms, stage4, spc
 
 
 @click.group()
@@ -18,4 +18,5 @@ prithvi_precip.command(name="extract_imerg_precip")(imerg.extract_precip)
 prithvi_precip.command(name="extract_merra2_precip")(merra2_precip.extract_precip)
 prithvi_precip.command(name="extract_era5_precip")(era5_precip.extract_precip)
 prithvi_precip.command(name="extract_mrms_precip")(mrms.extract_precip)
+prithvi_precip.command(name="extract_stage4_precip")(stage4.extract_training_data)
 prithvi_precip.command(name="extract_severe_weather")(spc.extract_training_data)
