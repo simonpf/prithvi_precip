@@ -1,0 +1,231 @@
+"""
+prithvi_precip.mlp
+==================
+
+Provides dataloaders to load sever weather and precipitation accumulation statistics similar
+to CSU MLP system.
+"""
+from datetime import datetime
+import logging
+from functools import partial, cached_property
+from math import trunc
+from pathlib import Path
+from typing import Dict, Tuple, Union
+
+import numpy as np
+from pansat.time import to_datetime64
+import torch
+from torch import nn
+import xarray as xr
+
+from .datasets import MERRAInputData
+from .utils import load_static_input, load_climatology
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+class SeverWeatherForecastDataset(MERRAInputData):
+    """
+    A PyTorch Dataset for forecasting sever weather occurrence.
+    """
+    def __init__(
+            self,
+            training_data_path: Union[Path, str],
+            max_steps: int = 12,
+            climate: bool = True,
+            sampling_rate: float = 1.0,
+            reference_data: str = "imerg",
+            center_meridionally: bool = True
+    ):
+        """
+        Args:
+            training_data_path: The directory containing the dynamic input data.
+            input_time: The time difference between input samples.
+            accumulation_period: The precipitation accumulation period.
+            max_steps: The maximum number of timesteps to forecast precipitation.
+            climate: Whether to include climatology data in the input.
+            sampling_rate: Sub- or super-sample dataset.
+            reference_data: Name of the reference data source.
+        """
+        self.training_data_path = Path(training_data_path)
+        self.data_path = self.training_data_path.parent
+        self.input_time = 24
+        self.accumulation_period = 24
+        self.max_steps = max_steps
+        self.climate = climate
+        self.sampling_rate = sampling_rate
+        self.reference_data = "sever_weather"
+        self.center_meridionally = center_meridionally
+
+        self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.output_times, self.output_files = self.find_target_files(self.training_data_path)
+
+        self._pos_sig = None
+        self.input_indices, self.output_indices = self.calculate_valid_samples()
+        self.rng = np.random.default_rng(seed=42)
+
+    @cached_property
+    def conus_slices(self) -> Dict[str, slice]:
+        with xr.open_dataset(self.training_data_path / self.output_files[0]) as data:
+            lons = data.longitude.data
+            lats = data.latitude.data
+        data.close()
+        del data
+
+        col_start = np.where(lons > -125)[0][0]
+        col_end = col_start + 3 * 32
+        row_start = np.where(lats > 25)[0][0]
+        row_end = row_start + 2 * 30
+        return {
+            "latitude": slice(row_start, row_end),
+            "longitude": slice(col_start, col_end),
+        }
+
+    def find_target_files(self, training_data_path: Path,) -> np.ndarray:
+        """
+        Find target files for training.
+        """
+        times = []
+        files = []
+
+        reference_data = "severe_weather_24"
+
+        prefix = f"{reference_data.lower()}"
+        pattern = f"**/{prefix}*.nc"
+        date_pattern = f"severe_weather_%Y%m%d%H%M%S.nc"
+        pattern = "severe_weather_24/**/severe_weather_*"
+
+        for path in sorted(list(training_data_path.glob(pattern))):
+            try:
+                date = datetime.strptime(path.name, date_pattern)
+                date64 = to_datetime64(date)
+                files.append(str(path.relative_to(training_data_path)))
+                times.append(date64)
+            except ValueError:
+                continue
+
+        times = np.array(times)
+        files = np.array(files)
+        return times, files
+
+
+    def worker_init_fn(self, w_id: int) -> None:
+        """
+        Seeds the dataset loader's random number generator.
+        """
+        seed = int.from_bytes(os.urandom(4), "big") + w_id
+        self.rng = np.random.default_rng(seed)
+
+
+    def calculate_valid_samples(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        A tuple of index arrays containing the indices of input- and output files for all training data
+        samples satifying the requested input and lead time combination.
+
+        Return: A tuple '(input_indices, output_indices)' with `input_indices` of shape
+            '(n_samples, n_input_times)' containing the indices of all the input files for each data
+            samples. Similarly, 'output_indices' is a numpy.ndarray of shape '(n_samples, n_lead_times)'
+            containing the corresponding file indices to load for the output data.
+        """
+        input_indices = []
+        output_indices = []
+        for ind, sample_time in enumerate(self.input_times):
+            input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
+            output_times = [
+                sample_time + np.timedelta64(int(t_i * self.input_time), "h") for t_i in np.arange(0, self.max_steps) + 0.5
+            ]
+            output_times = [t_o for t_o in output_times if t_o in self.output_times]
+            valid = all([t_i in self.input_times for t_i in input_times])
+            if valid and len(output_times) > 0:
+                input_indices.append([ind - self.input_time // 3, ind])
+                output_inds = []
+                for output_time in output_times:
+                    output_ind = np.searchsorted(self.output_times, output_time)
+                    output_inds.append(output_ind)
+                output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
+        return np.array(input_indices), np.array(output_indices)
+
+    def __len__(self):
+        return trunc(len(self.input_indices) * self.sampling_rate)
+
+    def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Load and return a single data point from the dataset.
+        """
+        lower = trunc(ind / self.sampling_rate)
+        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
+        if lower < upper:
+            ind = self.rng.integers(lower, upper)
+        else:
+            ind = lower
+
+        try:
+            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
+            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+
+            static_time = input_times[-1]
+            static_in = torch.tensor(load_static_input(static_time, self.data_path))
+
+            input_time = self.input_time
+
+            # Remove one row along lat dimension.
+            pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+            if self.center_meridionally:
+                transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+            else:
+                transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+            x = {
+                "x": transform(torch.stack(dynamic_in, 0)),
+                "static": transform(static_in),
+                "input_time": torch.tensor(input_time).to(dtype=torch.float32),
+            }
+
+            inds = self.output_indices[ind]
+            inds = inds[0 <= inds]
+            output_ind = self.rng.choice(inds)
+            output_file = self.output_files[output_ind]
+            output_time = self.output_times[output_ind]
+
+            lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
+            x["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
+
+            if self.climate:
+                climate = load_climatology(output_time, self.data_path)
+                x["climate"] = transform(torch.tensor(climate))
+
+            with xr.open_dataset(self.training_data_path / output_file) as data:
+                LOGGER.debug("Loading sever weather mask from %s.", output_file)
+                data = data[self.conus_slices].compute()
+                tornado = torch.tensor(data.tornado.data)
+                hail = torch.tensor(data.hail.data)
+                wind = torch.tensor(data.wind.data)
+                tornado = (tornado > 0)
+                hail = (hail > 0)
+                wind = (wind > 0)
+                severe = tornado + hail + wind
+
+                target = {
+                    "tornado": tornado,
+                    "hail": hail,
+                    "wind": wind,
+                    "severe": severe
+                }
+
+            data.close()
+            del data
+
+            return x, target
+
+        except Exception as exc:
+            raise exc
+            LOGGER.exception(
+                "Encountered an error when load training sample %s. Falling back to another "
+                " randomly-chosen sample.",
+                ind
+            )
+            new_ind = np.random.randint(0, len(self))
+            return self[new_ind]
