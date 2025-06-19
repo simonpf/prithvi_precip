@@ -150,9 +150,8 @@ def extract_severe_weather(
 
 
         tornado_mask = 0 <= tornado.mag
-        hail_mask = 0 <= hail.mag
+        hail_mask = 1 <= hail.mag
         wind_mask = 58 <= wind.mag
-
 
         bins = (LON_BINS, LAT_BINS)
         lons = tornado.slon
