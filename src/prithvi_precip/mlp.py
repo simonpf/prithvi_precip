@@ -13,19 +13,18 @@ from pathlib import Path
 from typing import Dict, Tuple, Union
 
 import numpy as np
-from pansat.time import to_datetime64
 import torch
 from torch import nn
 import xarray as xr
 
 from .datasets import MERRAInputData
-from .utils import load_static_input, load_climatology
+from .utils import load_static_input, load_climatology, to_datetime64
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-class SeverWeatherForecastDataset(MERRAInputData):
+class SevereWeatherForecastDataset(MERRAInputData):
     """
     A PyTorch Dataset for forecasting sever weather occurrence.
     """
@@ -178,7 +177,7 @@ class SeverWeatherForecastDataset(MERRAInputData):
             else:
                 transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
 
-            x = {
+            inpt = {
                 "x": transform(torch.stack(dynamic_in, 0)),
                 "static": transform(static_in),
                 "input_time": torch.tensor(input_time).to(dtype=torch.float32),
@@ -191,11 +190,11 @@ class SeverWeatherForecastDataset(MERRAInputData):
             output_time = self.output_times[output_ind]
 
             lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
-            x["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
+            inpt["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
 
             if self.climate:
                 climate = load_climatology(output_time, self.data_path)
-                x["climate"] = transform(torch.tensor(climate))
+                inpt["climate"] = transform(torch.tensor(climate))
 
             with xr.open_dataset(self.training_data_path / output_file) as data:
                 LOGGER.debug("Loading sever weather mask from %s.", output_file)
@@ -209,16 +208,26 @@ class SeverWeatherForecastDataset(MERRAInputData):
                 severe = tornado + hail + wind
 
                 target = {
-                    "tornado": tornado,
-                    "hail": hail,
-                    "wind": wind,
-                    "severe": severe
+                    "tornado": tornado.to(dtype=torch.float32),
+                    "hail": hail.to(dtype=torch.float32),
+                    "wind": wind.to(dtype=torch.float32),
+                    "severe": severe.to(dtype=torch.float32)
                 }
+
 
             data.close()
             del data
 
-            return x, target
+            lat_bounds = self.conus_slices["latitude"]
+            lon_bounds = self.conus_slices["longitude"]
+
+            inpt.update({
+                "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
+                "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
+                "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
+            })
+
+            return inpt, target
 
         except Exception as exc:
             raise exc

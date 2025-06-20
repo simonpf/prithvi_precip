@@ -12,6 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import xarray as xr
 
@@ -195,3 +196,15 @@ def load_static_input(time: np.datetime64, data_dir: Path) -> np.ndarray:
         data[n_pos + 4 + ind] = static_data[var].data
 
     return data.astype(np.float32)
+
+
+def to_datetime64(time):
+    """
+    Try to convert a given time to a numpy datetime64 object.
+    """
+    if isinstance(time, np.ndarray) and time.dtype == np.datetime64:
+        return time
+    try:
+        return pd.to_datetime(time).to_datetime64()
+    except ValueError:
+        raise ValueError("Could not convert '%s' to datetime object.")

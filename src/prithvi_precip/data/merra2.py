@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Union
 
 import numpy as np
-from pansat import FileRecord, Geometry, TimeRange
-from pansat.products.reanalysis.merra import MERRA2, MERRA2Constant
-from pansat.time import to_datetime, to_datetime64
+try:
+    from pansat import FileRecord, Geometry, TimeRange
+    from pansat.products.reanalysis.merra import MERRA2, MERRA2Constant
+    from pansat.time import to_datetime, to_datetime64
+except ImportError:
+    pass
 import xarray as xr
 
 
@@ -68,32 +71,37 @@ NAN_VALS = {
     "LAI": 0.0,
 }
 
-m2i3nvasm = MERRA2(
-    collection="m2i3nvasm",
-)
-m2i1nxasm = MERRA2(
-    collection="m2i1nxasm",
-)
-m2t1nxlnd = MERRA2(
-    collection="m2t1nxlnd",
-    variables=[
-        "GWETROOT", "LAI"
-    ]
-)
-m2t1nxflx = MERRA2(
-    collection="m2t1nxflx",
-)
-m2t1nxrad = MERRA2(
-    collection="m2t1nxrad",
-)
 
-DYNAMIC_PRODUCTS = [
-    m2i3nvasm,
-    m2i1nxasm,
-    m2t1nxlnd,
-    m2t1nxflx,
-    m2t1nxrad
-]
+try:
+    m2i3nvasm = MERRA2(
+        collection="m2i3nvasm",
+    )
+    m2i1nxasm = MERRA2(
+        collection="m2i1nxasm",
+    )
+    m2t1nxlnd = MERRA2(
+        collection="m2t1nxlnd",
+        variables=[
+            "GWETROOT", "LAI"
+        ]
+    )
+    m2t1nxflx = MERRA2(
+        collection="m2t1nxflx",
+    )
+    m2t1nxrad = MERRA2(
+        collection="m2t1nxrad",
+    )
+
+    DYNAMIC_PRODUCTS = [
+        m2i3nvasm,
+        m2i1nxasm,
+        m2t1nxlnd,
+        m2t1nxflx,
+        m2t1nxrad
+    ]
+except NameError:
+    pass
+
 
 
 def download_dynamic(year: int, month: int, day: int, output_path: Path) -> None:
@@ -171,16 +179,19 @@ def download_dynamic(year: int, month: int, day: int, output_path: Path) -> None
         data_t.to_netcdf(output_path / output_file, encoding=encoding)
 
 
-m2conxasm = MERRA2Constant(
-    collection="m2conxasm",
-)
-m2conxctm = MERRA2Constant(
-    collection="m2conxctm",
-)
-STATIC_PRODUCTS = [
-    m2conxasm,
-    m2conxctm
-]
+try:
+    m2conxasm = MERRA2Constant(
+        collection="m2conxasm",
+    )
+    m2conxctm = MERRA2Constant(
+        collection="m2conxctm",
+    )
+    STATIC_PRODUCTS = [
+        m2conxasm,
+        m2conxctm
+    ]
+except NameError:
+    pass
 
 
 def download_static(output_path: Path) -> None:

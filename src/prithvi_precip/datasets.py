@@ -13,7 +13,6 @@ import re
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
-from pansat.time import to_datetime64
 from prithvi_precip.utils import load_static_input, load_climatology
 import torch
 from torch import nn
@@ -25,6 +24,7 @@ from prithvi_precip.data.merra2 import (
     VERTICAL_VARS,
     STATIC_SURFACE_VARS,
 )
+from .utils import to_datetime64
 
 
 LOGGER = logging.getLogger(__name__)
