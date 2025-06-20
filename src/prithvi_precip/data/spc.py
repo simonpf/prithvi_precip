@@ -191,9 +191,9 @@ def extract_severe_weather(
         output_file = output_path / fname
         output_file.parent.mkdir(exist_ok=True, parents=True)
         encoding = {
-            "hail": {"dtype": "uint8", "zlib": True},
-            "tornado": {"dtype": "uint8", "zlib": True},
-            "wind": {"dtype": "uint8", "zlib": True},
+            "hail": {"dtype": "int8", "zlib": True, "_FillValue": -1},
+            "tornado": {"dtype": "int8", "zlib": True, "_FillValue": -1},
+            "wind": {"dtype": "int8", "zlib": True, "_FillValue": -1},
         }
         result.to_netcdf(fname, encoding=encoding)
 
