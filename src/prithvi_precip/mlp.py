@@ -9,7 +9,9 @@ from datetime import datetime
 import logging
 from functools import partial, cached_property
 from math import trunc
+import os
 from pathlib import Path
+import shutil
 from typing import Dict, Tuple, Union
 
 import numpy as np
@@ -63,6 +65,32 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         self.rng = np.random.default_rng(seed=42)
+        self.copy_files()
+
+    def copy_files(self) -> None:
+        """
+        Copy file to local file system.
+        """
+        base_folder = self.training_data_path.parent.name
+        rank = int(os.environ.get("RANK", 0))
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        tmp_path = Path(os.environ.get("TMPDIR", "/tmp")) / base_folder
+        local_data = tmp_path / f"training_data_{local_rank:02}"
+        local_data.mkdir(exist_ok=True, parents=True)
+
+        if local_rank == 0:
+            print(f"LOCAL DATA ({rank}) :: ", list(tmp_path.glob("*")))
+
+    def __del__(self) -> None:
+        """
+        Clean up temporary directory if it exists.
+        """
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        if local_rank == 0:
+            base_folder = self.training_data_path.parent.name
+            tmp_path = Path(os.environ.get("TMPDIR", "/tmp")) / base_folder
+            if tmp_path.exists():
+                shutil.rmtree(tmp_path)
 
     @cached_property
     def conus_slices(self) -> Dict[str, slice]:
