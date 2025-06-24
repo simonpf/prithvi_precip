@@ -17,6 +17,7 @@ from typing import Dict, Tuple, Union
 import numpy as np
 import torch
 from torch import nn
+import torch.distributed as dist
 import xarray as xr
 
 from .datasets import MERRAInputData
@@ -36,18 +37,21 @@ class SevereWeatherForecastDataset(MERRAInputData):
             max_steps: int = 12,
             climate: bool = True,
             sampling_rate: float = 1.0,
-            reference_data: str = "imerg",
-            center_meridionally: bool = True
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None,
+            cleanup: bool = False
     ):
         """
         Args:
             training_data_path: The directory containing the dynamic input data.
-            input_time: The time difference between input samples.
-            accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
             climate: Whether to include climatology data in the input.
             sampling_rate: Sub- or super-sample dataset.
-            reference_data: Name of the reference data source.
+            center_meridionally: Whether to center the data meridionally instead of cropping.
+            validation: Boolean flag inidicating whether that dataset contains validation data.
+            local_data: Optional Path pointing to a local directory to use
+            cleanup: Whether to cleanup copied training samples.
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
@@ -58,39 +62,102 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self.sampling_rate = sampling_rate
         self.reference_data = "sever_weather"
         self.center_meridionally = center_meridionally
+        self.validation = validation
+
+        self.local_data = None
+        if local_data is not None:
+            self.local_data = Path(local_data)
+        self.cleanup = cleanup
 
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_target_files(self.training_data_path)
-
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         self.rng = np.random.default_rng(seed=42)
-        self.copy_files()
 
-    def copy_files(self) -> None:
+        if self.local_data is not None:
+            self.split_and_copy_files()
+
+    def split_and_copy_files(self) -> None:
         """
-        Copy file to local file system.
+        Splits files and copies them to local memory.
         """
-        base_folder = self.training_data_path.parent.name
-        rank = int(os.environ.get("RANK", 0))
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+            rank = dist.get_rank()
+        else:
+            world_size = 1
+            rank = 0
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+        n_samples = len(self.input_indices)
+        n_samples_local = n_samples // world_size
+        start = rank * n_samples_local
+        end = start + n_samples_local
+
+        local_input_indices = [self.input_indices[ind] for ind in self.input_indices[start:end]]
+        local_output_indices = [self.output_indices[ind] for ind in self.output_indices[start:end]]
+
+        # Create directory for local data
         tmp_path = Path(os.environ.get("TMPDIR", "/tmp")) / base_folder
-        local_data = tmp_path / f"training_data_{local_rank:02}"
+
+        if self.validation:
+            local_data = tmp_path / f"validation_data_{local_rank:02}"
+        else:
+            local_data = tmp_path / f"training_data_{local_rank:02}"
+
         local_data.mkdir(exist_ok=True, parents=True)
 
-        if local_rank == 0:
-            print(f"LOCAL DATA ({rank}) :: ", list(tmp_path.glob("*")))
+        # Copy input and output samples.
+        LOGGER.info(
+            "Copying training files to temporary directory."
+        )
+        input_files = set(self.input_files[ind] for ind in self.local_input_indices)
+        for path in input_files:
+            rel_path = path.relative_to(self.training_data_path)
+            target_path = local_data / rel_path
+            if not target_path.exists():
+                target_path.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy2(path, target_path)
+
+        output_files = set(self.output_files[ind] for ind in self.local_output_indices)
+        for path in output_files:
+            rel_path = path.relative_to(self.training_data_path)
+            target_path = local_data / rel_path
+            if not target_path.exists():
+                target_path.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy2(path, target_path)
+
+        if local_rank == 0 and not self.validation:
+            LOGGER.info(
+                "Copying static files to temporary directory."
+            )
+            static_data = self.training_data_path.parent / "static"
+            if not static_data.exists():
+                shutil.copytree(self.training_data_path.parent / "static")
+            climatology = self.training_data_path.parent / "climatology"
+            if not climatology.exists():
+                shutil.copytree(self.training_data_path.parent / "climatology")
+
+        output_files = set(self.input_files[ind] for ind in self.local_input_indices)
+
+        rank = int(os.environ.get("RANK", 0))
+
+        self.training_data_path = local_data
+        self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.output_times, self.output_files = self.find_target_files(self.training_data_path)
+        self.input_indices, self.output_indices = self.calculate_valid_samples()
+        assert len(self.input_indices) == n_samples_local
+
 
     def __del__(self) -> None:
         """
         Clean up temporary directory if it exists.
         """
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        if local_rank == 0:
-            base_folder = self.training_data_path.parent.name
-            tmp_path = Path(os.environ.get("TMPDIR", "/tmp")) / base_folder
-            if tmp_path.exists():
-                shutil.rmtree(tmp_path)
+        if local_rank == 0 and self.local_data is not None and self.cleanup:
+            if self.local_data.exists():
+                shutil.rmtree(self.local_data)
 
     @cached_property
     def conus_slices(self) -> Dict[str, slice]:
