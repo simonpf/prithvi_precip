@@ -12,7 +12,7 @@ from math import trunc
 import os
 from pathlib import Path
 import shutil
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -76,7 +76,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self.rng = np.random.default_rng(seed=42)
 
         if self.local_data is not None:
-            self.copy_files()
+            self.split_and_copy_files()
 
     def split_and_copy_files(self) -> None:
         """
@@ -95,55 +95,59 @@ class SevereWeatherForecastDataset(MERRAInputData):
         start = rank * n_samples_local
         end = start + n_samples_local
 
-        local_input_indices = [self.input_indices[ind] for ind in self.input_indices[start:end]]
-        local_output_indices = [self.output_indices[ind] for ind in self.output_indices[start:end]]
+        local_input_indices = self.input_indices[start:end]
+        local_output_indices = self.output_indices[start:end]
 
         # Create directory for local data
-        tmp_path = Path(os.environ.get("TMPDIR", "/tmp")) / base_folder
+        base_folder = self.training_data_path.parent.name
 
         if self.validation:
-            local_data = tmp_path / f"validation_data_{local_rank:02}"
+            training_local = self.local_data / base_folder / f"validation_data_{local_rank:02}"
         else:
-            local_data = tmp_path / f"training_data_{local_rank:02}"
+            training_local = self.local_data / base_folder / f"training_data_{local_rank:02}"
 
-        local_data.mkdir(exist_ok=True, parents=True)
+        training_local.mkdir(exist_ok=True, parents=True)
 
         # Copy input and output samples.
         LOGGER.info(
-            "Copying training files to temporary directory."
+            "Copying %s training files to local directory %s.",
+            len(local_input_indices),
+            training_local
         )
-        input_files = set(self.input_files[ind] for ind in self.local_input_indices)
-        for path in input_files:
-            rel_path = path.relative_to(self.training_data_path)
-            target_path = local_data / rel_path
-            if not target_path.exists():
-                target_path.parent.mkdir(exist_ok=True, parents=True)
-                shutil.copy2(path, target_path)
+        input_files = []
+        for ind in local_input_indices:
+            input_files += list(self.input_files[ind])
+        input_files = set(input_files)
 
-        output_files = set(self.output_files[ind] for ind in self.local_output_indices)
-        for path in output_files:
-            rel_path = path.relative_to(self.training_data_path)
-            target_path = local_data / rel_path
+        output_files = []
+        for ind in local_output_indices:
+            output_files += list(self.output_files[ind])
+        output_files = set(output_files)
+
+        all_files = input_files.union(output_files)
+
+        for path in all_files:
+            rel_path = Path(path)
+            target_path = training_local / rel_path
             if not target_path.exists():
                 target_path.parent.mkdir(exist_ok=True, parents=True)
-                shutil.copy2(path, target_path)
+                shutil.copy2(self.training_data_path / rel_path, target_path)
 
         if local_rank == 0 and not self.validation:
             LOGGER.info(
                 "Copying static files to temporary directory."
             )
-            static_data = self.training_data_path.parent / "static"
+            static_data = training_local.parent / "static"
             if not static_data.exists():
-                shutil.copytree(self.training_data_path.parent / "static")
-            climatology = self.training_data_path.parent / "climatology"
+                shutil.copytree(self.training_data_path.parent / "static", static_data.parent, dirs_exist_ok=True)
+            climatology = training_local.parent / "climatology"
             if not climatology.exists():
-                shutil.copytree(self.training_data_path.parent / "climatology")
+                shutil.copytree(self.training_data_path.parent / "climatology", climatology.parent, dirs_exist_ok=True)
 
-        output_files = set(self.input_files[ind] for ind in self.local_input_indices)
 
         rank = int(os.environ.get("RANK", 0))
 
-        self.training_data_path = local_data
+        self.training_data_path = training_local
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_target_files(self.training_data_path)
         self.input_indices, self.output_indices = self.calculate_valid_samples()
