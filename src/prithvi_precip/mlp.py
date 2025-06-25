@@ -60,7 +60,6 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self.max_steps = max_steps
         self.climate = climate
         self.sampling_rate = sampling_rate
-        self.reference_data = "sever_weather"
         self.center_meridionally = center_meridionally
         self.validation = validation
 
@@ -82,13 +81,12 @@ class SevereWeatherForecastDataset(MERRAInputData):
         """
         Splits files and copies them to local memory.
         """
-        if dist.is_initialized():
-            world_size = dist.get_world_size()
-            rank = dist.get_rank()
-        else:
-            world_size = 1
-            rank = 0
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        LOGGER.info("Splitting data: %s %s %s", rank, local_rank, world_size)
 
         n_samples = len(self.input_indices)
         n_samples_local = n_samples // world_size
@@ -139,15 +137,16 @@ class SevereWeatherForecastDataset(MERRAInputData):
             )
             static_data = training_local.parent / "static"
             if not static_data.exists():
-                shutil.copytree(self.training_data_path.parent / "static", static_data.parent, dirs_exist_ok=True)
+                shutil.copytree(self.training_data_path.parent / "static", static_data, dirs_exist_ok=True)
             climatology = training_local.parent / "climatology"
             if not climatology.exists():
-                shutil.copytree(self.training_data_path.parent / "climatology", climatology.parent, dirs_exist_ok=True)
+                shutil.copytree(self.training_data_path.parent / "climatology", climatology, dirs_exist_ok=True)
 
 
         rank = int(os.environ.get("RANK", 0))
 
         self.training_data_path = training_local
+        self.data_path = self.training_data_path.parent
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_target_files(self.training_data_path)
         self.input_indices, self.output_indices = self.calculate_valid_samples()
@@ -236,7 +235,10 @@ class SevereWeatherForecastDataset(MERRAInputData):
             output_times = [t_o for t_o in output_times if t_o in self.output_times]
             valid = all([t_i in self.input_times for t_i in input_times])
             if valid and len(output_times) > 0:
-                input_indices.append([ind - self.input_time // 3, ind])
+
+                prev_ind = np.searchsorted(self.input_times, input_times[0])
+                input_indices.append([prev_ind, ind])
+
                 output_inds = []
                 for output_time in output_times:
                     output_ind = np.searchsorted(self.output_times, output_time)
