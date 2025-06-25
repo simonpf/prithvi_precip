@@ -60,7 +60,6 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self.max_steps = max_steps
         self.climate = climate
         self.sampling_rate = sampling_rate
-        self.reference_data = "sever_weather"
         self.center_meridionally = center_meridionally
         self.validation = validation
 
@@ -236,7 +235,10 @@ class SevereWeatherForecastDataset(MERRAInputData):
             output_times = [t_o for t_o in output_times if t_o in self.output_times]
             valid = all([t_i in self.input_times for t_i in input_times])
             if valid and len(output_times) > 0:
-                input_indices.append([ind - self.input_time // 3, ind])
+
+                prev_ind = np.searchsorted(self.input_times, input_times[0])
+                input_indices.append([prev_ind, ind])
+
                 output_inds = []
                 for output_time in output_times:
                     output_ind = np.searchsorted(self.output_times, output_time)
