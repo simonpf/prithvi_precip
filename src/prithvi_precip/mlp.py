@@ -79,9 +79,8 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
     def split_and_copy_files(self) -> None:
         """
-        Splits files and copies them to local memory.
+        Shards data across nodes and copies them to the location pointed to by self.local_data.
         """
-
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         local_rank = int(os.environ["LOCAL_RANK"])

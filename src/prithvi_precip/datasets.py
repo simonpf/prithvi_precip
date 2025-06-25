@@ -393,7 +393,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
             climate: bool = True,
             sampling_rate: float = 1.0,
             reference_data: str = "imerg",
-            center_meridionally: bool = True
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None
     ):
         """
         Args:
@@ -404,6 +406,11 @@ class DirectPrecipForecastDataset(MERRAInputData):
             climate: Whether to include climatology data in the input.
             sampling_rate: Sub- or super-sample dataset.
             reference_data: Name of the reference data source.
+            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
+                of the input data by one. If False, will use negative paddgin.
+            validation: Flat indicating whether the dataset is used to load validation or training data.
+            local_data: An optional path pointing to a location to which to copy the training data. This should
+                typically be node-local memory that can be accessed rapidly.
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
@@ -421,10 +428,91 @@ class DirectPrecipForecastDataset(MERRAInputData):
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
+        self.local_data = None
+        if local_data is not None:
+            self.local_data = Path(local_data)
 
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         self.rng = np.random.default_rng(seed=42)
+
+        if self.local_data is not None:
+            self.split_and_copy_files()
+
+
+    def split_and_copy_files(self) -> None:
+        """
+        Shards data across nodes and copies them to the location pointed to by self.local_data.
+        """
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        LOGGER.info("Splitting data: %s %s %s", rank, local_rank, world_size)
+
+        n_samples = len(self.input_indices)
+        n_samples_local = n_samples // world_size
+        start = rank * n_samples_local
+        end = start + n_samples_local
+
+        local_input_indices = self.input_indices[start:end]
+        local_output_indices = self.output_indices[start:end]
+
+        # Create directory for local data
+        base_folder = self.training_data_path.parent.name
+
+        if self.validation:
+            training_local = self.local_data / base_folder / f"validation_data_{local_rank:02}"
+        else:
+            training_local = self.local_data / base_folder / f"training_data_{local_rank:02}"
+
+        training_local.mkdir(exist_ok=True, parents=True)
+
+        # Copy input and output samples.
+        LOGGER.info(
+            "Copying %s training files to local directory %s.",
+            len(local_input_indices),
+            training_local
+        )
+        input_files = []
+        for ind in local_input_indices:
+            input_files += list(self.input_files[ind])
+        input_files = set(input_files)
+
+        output_files = []
+        for ind in local_output_indices:
+            output_files += list(self.output_files[ind])
+        output_files = set(output_files)
+
+        all_files = input_files.union(output_files)
+
+        for path in all_files:
+            rel_path = Path(path)
+            target_path = training_local / rel_path
+            if not target_path.exists():
+                target_path.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy2(self.training_data_path / rel_path, target_path)
+
+        if local_rank == 0 and not self.validation:
+            LOGGER.info(
+                "Copying static files to temporary directory."
+            )
+            static_data = training_local.parent / "static"
+            if not static_data.exists():
+                shutil.copytree(self.training_data_path.parent / "static", static_data, dirs_exist_ok=True)
+            climatology = training_local.parent / "climatology"
+            if not climatology.exists():
+                shutil.copytree(self.training_data_path.parent / "climatology", climatology, dirs_exist_ok=True)
+
+
+        rank = int(os.environ.get("RANK", 0))
+
+        self.training_data_path = training_local
+        self.data_path = self.training_data_path.parent
+        self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.output_times, self.output_files = self.find_target_files(self.training_data_path)
+        self.input_indices, self.output_indices = self.calculate_valid_samples()
+        assert len(self.input_indices) == n_samples_local
 
     def find_precip_files(
             self,
