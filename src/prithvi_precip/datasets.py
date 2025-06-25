@@ -8,8 +8,11 @@ from datetime import datetime
 from functools import cache, partial
 import logging
 from math import trunc
+import os
 from pathlib import Path
 import re
+import shutil
+from time import sleep
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
@@ -421,6 +424,10 @@ class DirectPrecipForecastDataset(MERRAInputData):
         self.sampling_rate = sampling_rate
         self.reference_data = reference_data
         self.center_meridionally = center_meridionally
+        self.validation = validation
+        self.local_data = None
+        if local_data is not None:
+            self.local_data = Path(local_data)
 
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_precip_files(
@@ -428,9 +435,6 @@ class DirectPrecipForecastDataset(MERRAInputData):
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
-        self.local_data = None
-        if local_data is not None:
-            self.local_data = Path(local_data)
 
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
@@ -497,20 +501,27 @@ class DirectPrecipForecastDataset(MERRAInputData):
             LOGGER.info(
                 "Copying static files to temporary directory."
             )
-            static_data = training_local.parent / "static"
-            if not static_data.exists():
-                shutil.copytree(self.training_data_path.parent / "static", static_data, dirs_exist_ok=True)
             climatology = training_local.parent / "climatology"
             if not climatology.exists():
                 shutil.copytree(self.training_data_path.parent / "climatology", climatology, dirs_exist_ok=True)
-
+            static_data = training_local.parent / "static"
+            if not static_data.exists():
+                shutil.copytree(self.training_data_path.parent / "static", static_data, dirs_exist_ok=True)
+        else:
+            static_data = training_local.parent / "static"
+            while not static_data.exists():
+                sleep(0.1)
 
         rank = int(os.environ.get("RANK", 0))
 
         self.training_data_path = training_local
         self.data_path = self.training_data_path.parent
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
-        self.output_times, self.output_files = self.find_target_files(self.training_data_path)
+        self.output_times, self.output_files = self.find_precip_files(
+            self.training_data_path,
+            reference_data=self.reference_data,
+            accumulation_period=self.accumulation_period
+        )
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         assert len(self.input_indices) == n_samples_local
 
