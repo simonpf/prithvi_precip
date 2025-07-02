@@ -7,6 +7,7 @@ Functionality to extract Prithvi Precip training data derived from Stage4 radar 
 from calendar import monthrange
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from functools import cache
 import logging
 from pathlib import Path
 
@@ -22,6 +23,23 @@ from precipfm.definitions import LAT_BINS, LON_BINS
 
 
 LOGGER = logging.getLogger(__name__)
+
+@cache
+def load_stage4_data(year, month) -> xr.Dataset:
+    """
+    Load Stage IV data for given year and month.
+
+    Args:
+        year: The year
+        month: The month
+
+    Return:
+        The loaded Stage IV data.
+    """
+    time_range = TimeRange(datetime(year, month, 10))
+    rec = stage4.surface_precip.get(time_range)[0]
+    return stage4.surface_precip.open(rec)
+
 
 
 def extract_stage4_precip(
@@ -50,10 +68,11 @@ def extract_stage4_precip(
     time_now = datetime(year, month, day)
     time_after = time + timedelta(days=1)
 
-    recs = stage4.surface_precip.get(TimeRange(time_before, time_after))
+    yearmonths = set([(time.year, time.month) for time in [time_before, time_now, time_after]])
+
     surface_precip = []
-    for rec in recs:
-        surface_precip.append(stage4.surface_precip.open(rec))
+    for year, month in yearmonths:
+        surface_precip.append(load_stage4_data(year, month))
     surface_precip = xr.concat(surface_precip, dim="time")
 
     time_shifted = surface_precip.time[:-accumulate]
