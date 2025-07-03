@@ -135,9 +135,9 @@ def extract_severe_weather(
         start_time = pd.Timestamp(start_time, tz='UTC')
         end_time = start_time + np.timedelta64(accumulate, "h")
 
-        tornado = get_tornado_data()
-        hail = get_hail_data()
-        wind = get_wind_data()
+        tornado = get_tornado_data().copy()
+        hail = get_hail_data().copy()
+        wind = get_wind_data().copy()
         wind['mag'] = wind['mag'] * 1.15
 
 
@@ -148,10 +148,13 @@ def extract_severe_weather(
         mask = (start_time <= wind.time) * (wind.time < end_time)
         wind = wind[mask]
 
-
         tornado_mask = 0 <= tornado.mag
         hail_mask = 1 <= hail.mag
         wind_mask = 58 <= wind.mag
+
+        tornado = tornado.loc[tornado_mask]
+        hail = hail.loc[hail_mask]
+        wind = wind.loc[wind_mask]
 
         bins = (LON_BINS, LAT_BINS)
         lons = tornado.slon
