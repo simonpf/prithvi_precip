@@ -40,7 +40,8 @@ class SevereWeatherForecastDataset(MERRAInputData):
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
-            cleanup: bool = False
+            cleanup: bool = False,
+            local: bool = False
     ):
         """
         Args:
@@ -52,6 +53,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
             validation: Boolean flag inidicating whether that dataset contains validation data.
             local_data: Optional Path pointing to a local directory to use
             cleanup: Whether to cleanup copied training samples.
+            local: Whether to use only local training data.
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
@@ -62,6 +64,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
         self.sampling_rate = sampling_rate
         self.center_meridionally = center_meridionally
         self.validation = validation
+        self.local = local
 
         self.local_data = None
         if local_data is not None:
@@ -321,12 +324,18 @@ class SevereWeatherForecastDataset(MERRAInputData):
             lat_bounds = self.conus_slices["latitude"]
             lon_bounds = self.conus_slices["longitude"]
 
-            inpt.update({
-                "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
-                "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
-                "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
-            })
-
+            if self.local:
+                inpt.update({
+                    "x": inpt["x"][..., lat_bounds, lon_bounds],
+                    "climate": inpt["climate"][..., lat_bounds, lon_bounds],
+                    "static": inpt["static"][..., lat_bounds, lon_bounds],
+                })
+            else:
+                inpt.update({
+                    "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
+                    "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
+                    "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
+                })
             return inpt, target
 
         except Exception as exc:
