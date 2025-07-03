@@ -166,7 +166,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
     @cached_property
     def conus_slices(self) -> Dict[str, slice]:
-        with xr.open_dataset(self.training_data_path / self.output_files[0]) as data:
+        with xr.open_dataset(self.training_data_path / self.input_files[0]) as data:
             lons = data.longitude.data
             lats = data.latitude.data
         data.close()
@@ -283,7 +283,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
             inpt = {
                 "x": transform(torch.stack(dynamic_in, 0)),
                 "static": transform(static_in),
-                "input_time": torch.tensor(input_time).to(dtype=torch.float32),
+                "input_time": torch.tensor(input_time / 24.0).to(dtype=torch.float32),
             }
 
             inds = self.output_indices[ind]
@@ -293,7 +293,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
             output_time = self.output_times[output_ind]
 
             lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
-            inpt["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
+            inpt["lead_time"] = torch.tensor(lead_time / 24.0).to(dtype=torch.float32)
 
             if self.climate:
                 climate = load_climatology(output_time, self.data_path)
@@ -347,3 +347,83 @@ class SevereWeatherForecastDataset(MERRAInputData):
             )
             new_ind = np.random.randint(0, len(self))
             return self[new_ind]
+
+
+    def get_direct_forecast_input(self, init_time: np.datetime64, target_step: int) -> Dict[str, torch.Tensor]:
+        """
+        Get forecast input data to perform a continuous forecast over a given number of steps
+        using a direct forecasting model.
+
+        Args:
+            init_time: The initialization time of the forecast.
+            target_step: The time step to forecast.
+
+        Return:
+            A dictionary contraining the loaded input tensors.
+        """
+        input_times = [init_time + np.timedelta64(t_i * 24, "h") for t_i in [-1, 0]]
+        for input_time in input_times:
+            if input_time not in self.input_times:
+                raise ValueError(
+                    "Required input data for t=%s not available.",
+                    input_time
+                )
+
+        dynamic_in = []
+        for input_time in input_times:
+            ind = np.searchsorted(self.input_times, input_time)
+            dynamic_in.append(self.load_dynamic_data(self.input_files[ind]))
+
+        static_time = input_times[-1]
+        static_in = load_static_input(static_time, self.data_path)
+
+        if self.center_meridionally:
+            transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+        else:
+            transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+        dynamic_in = transform(torch.stack(dynamic_in, 0))[None]
+        static_in = transform(torch.tensor(static_in))[None]
+        input_time = torch.tensor(240.0)
+        lead_time = torch.tensor(12.0 + target_step * 24.0)
+
+        x = {
+            "x": dynamic_in,
+            "static": static_in,
+            "lead_time": lead_time,
+            "input_time": input_time,
+        }
+
+        target_time = init_time + np.timedelta64(int(24 * (target_step + 0.5)), "h")
+
+        if self.climate:
+            climate = torch.tensor(load_climatology(target_time, self.data_path)).to(dtype=torch.float32)
+            x["climate"] = transform(climate)[None]
+
+        lat_bounds = self.conus_slices["latitude"]
+        lon_bounds = self.conus_slices["longitude"]
+
+        x.update({
+            "x_regional": x["x"][..., lat_bounds, lon_bounds],
+            "climate_regional": x["climate"][..., lat_bounds, lon_bounds],
+            "static_regional": x["static"][..., lat_bounds, lon_bounds],
+        })
+
+
+        #if self.obs_loader is not None:
+        #    obs = []
+        #    meta = []
+        #    for time_ind, time in enumerate(input_times):
+        #        obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
+        #        obs.append(obs_t)
+        #        meta.append(meta_t)
+        #    obs = torch.stack(obs, 0)
+        #    obs_mask = obs < -2.9
+        #    obs = torch.nan_to_num(obs, nan=-3.0)
+        #    meta = torch.stack(meta, 0)
+
+        #    x["obs"] = obs[None].repeat_interleave(n_steps, 0)
+        #    x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
+        #    x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
+
+        return x

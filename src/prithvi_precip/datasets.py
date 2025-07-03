@@ -398,7 +398,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
             reference_data: str = "imerg",
             center_meridionally: bool = True,
             validation: bool = False,
-            local_data: Optional[Path] = None
+            local_data: Optional[Path] = None,
+            weighted_sampling: bool = False
     ):
         """
         Args:
@@ -414,6 +415,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             validation: Flat indicating whether the dataset is used to load validation or training data.
             local_data: An optional path pointing to a location to which to copy the training data. This should
                 typically be node-local memory that can be accessed rapidly.
+            weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
@@ -428,6 +430,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         self.local_data = None
         if local_data is not None:
             self.local_data = Path(local_data)
+        self.weighted_sampling = weighted_sampling
 
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_precip_files(
@@ -631,7 +634,18 @@ class DirectPrecipForecastDataset(MERRAInputData):
 
             inds = self.output_indices[ind]
             inds = inds[0 <= inds]
-            output_ind = self.rng.choice(inds)
+
+            deltas = np.array([(self.output_times[output_ind] - input_times[-1]) for output_ind in inds])
+            if self.weighted_sampling:
+                deltas = deltas.astype("datetime64[s]")
+                delta_min = deltas.min()
+                delta_max = deltas.max()
+                weights = [0.5 + 0.5 * (delta - delta_min) / (delta_max - delta_min)]
+            else:
+                weights = np.ones_like(deltas)
+            weights /= weights.sum()
+
+            output_ind = self.rng.choice(inds, p=weights)
             output_file = self.output_files[output_ind]
             output_time = self.output_times[output_ind]
 
