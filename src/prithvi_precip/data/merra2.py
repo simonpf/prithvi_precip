@@ -4,10 +4,12 @@ prithvi_precip.data.merra2
 
 Provides functionality to extract MERRA-2 training data for the Prithvi Precip model.
 """
+import click
+from calendar import monthrange
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-from typing import Union
+from typing import List, Union
 
 import numpy as np
 try:
@@ -16,13 +18,17 @@ try:
     from pansat.time import to_datetime, to_datetime64
 except ImportError:
     pass
+from rich.progress import Progress
 import xarray as xr
+
+from prithvi_precip import domains
 
 
 LOGGER = logging.getLogger(__name__)
 
 LON_BINS = np.linspace(-180.3125, 179.6875, 577)
 LAT_BINS = np.linspace(-90, 90, 361)
+
 LEVELS = [
     34.0, 39.0, 41.0, 43.0, 44.0, 45.0, 48.0, 51.0, 53.0, 56.0, 63.0, 68.0, 71.0, 72.0
 ]
@@ -104,7 +110,13 @@ except NameError:
 
 
 
-def download_dynamic(year: int, month: int, day: int, output_path: Path) -> None:
+def download_dynamic(
+        year: int,
+        month: int,
+        day: int,
+        output_path: Path,
+        domain: str = "MERRA"
+) -> None:
     """
     Download dynamic MERRA input data for a date given by year, month, and day.
 
@@ -112,6 +124,7 @@ def download_dynamic(year: int, month: int, day: int, output_path: Path) -> None
         year: The year
         day: The day
         output_path: A path object pointing to the directory to which to download the data.
+        domain: Name of the domain for which to extract the data.
     """
     time_range = TimeRange(datetime(year, month, day, 12))
     merra_recs = []
@@ -167,6 +180,10 @@ def download_dynamic(year: int, month: int, day: int, output_path: Path) -> None
         lon="longitude"
     )
 
+    if domain.upper() != "MERRA":
+        lons, lats = domains.get_lonlats(domain)
+        data = data.interp(longitude=lons, latitude=lats)
+
     output_path = Path(output_path) / f"dynamic/{year:04}/{month:02}/{day:02}"
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -193,13 +210,72 @@ try:
 except NameError:
     pass
 
+@click.argument('year', type=int)
+@click.argument('month', type=int)
+@click.argument('days', nargs=-1, type=int, required=False)
+@click.argument('output_path', type=click.Path(writable=True))
+@click.option('--domain', type=str, default="MERRA")
+@click.option('--n_processes', default=1, type=int, help="Number of processes to use for extracting data.")
+def extract_merra_data(
+        year: int,
+        month: int,
+        days: List[int],
+        output_path: Path,
+        domain: str,
+        n_processes: int
+) -> None:
+    """
+    Extract MERRA2 input data fo the PrithviWxC model.
 
-def download_static(output_path: Path) -> None:
+    YEAR and MONTH are required. DAY is optional and defaults to extracting data for
+    all days of the month.
+    """
+    if days:
+        LOGGER.info(f"Extracting MERRA2  data for {year}-{month:02d} on days {', '.join(map(str, days))} to {output_path}.")
+    else:
+        LOGGER.info(f"Extracting MERRA2  data for all days in {year}-{month:02d} to {output_path}.")
+
+    if len(days) == 0:
+        _, n_days = monthrange(year, month)
+        days = list(range(1, n_days + 1))
+
+    if n_processes > 1:
+        LOGGER.info(f"Using {n_processes} processes for downloading data.")
+        tasks = [(year, month, day, output_path, domain) for d in days]
+
+        with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
+            task_id = progress.add_task("Extracting data:", total=len(tasks))
+            future_to_task = {executor.submit(download_dynamic, *task): task for task in tasks}
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    LOGGER.exception(f"Task {task} failed with error: {e}")
+                finally:
+                    progress.update(task_id, advance=1)
+    else:
+        with Progress() as progress:
+            task_id = progress.add_task("Extracting data:", total=len(days))
+            for d in days:
+                try:
+                    download_dynamic(year, month, d, output_path, domain)
+                except Exception as e:
+                    LOGGER.exception(f"Error processing day {d}: {e}")
+                finally:
+                    progress.update(task_id, advance=1)
+
+
+def download_static(
+        output_path: Path,
+        domain: str = "MERRA"
+) -> None:
     """
     Download static MERRA input data.
 
     Args:
         output_path: A path object pointing to the directory to which to download the data.
+        domain: Name of the domain for which to extract the data.
     """
     time_range = datetime(2020, 1, 1)
     merra_recs = []
@@ -223,9 +299,36 @@ def download_static(output_path: Path) -> None:
         lon="longitude"
     )
 
+    if domain.upper() != "MERRA":
+        lons, lats = domains.get_lonlats(domain)
+        data = data.interp(longitude=lons, latitude=lats)
+
     output_path = Path(output_path) / "static"
     output_path.mkdir(exist_ok=True)
 
     output_file = output_path / "merra2_static.nc"
     encoding = {name: {"zlib": True} for name in data}
     data.to_netcdf(output_file, encoding=encoding)
+
+
+@click.argument('output_path', type=click.Path(writable=True))
+@click.option('--domain', type=str, default="MERRA")
+def extract_static_merra_data(
+        output_path: Path,
+        domain: str,
+) -> None:
+    """
+    Extract MERRA2 input data fo the PrithviWxC model.
+
+    YEAR and MONTH are required. DAY is optional and defaults to extracting data for
+    all days of the month.
+    """
+    with Progress() as progress:
+        task_id = progress.add_task("Extracting data:", total=len(days))
+        for d in days:
+            try:
+                download_static(output_path, domain)
+            except Exception as e:
+                LOGGER.exception(f"Error processing day {d}: {e}")
+            finally:
+                progress.update(task_id, advance=1)
