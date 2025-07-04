@@ -272,9 +272,6 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
             input_time = self.input_time
 
-            # Remove one row along lat dimension.
-            pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
-
             if self.center_meridionally:
                 transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             else:
@@ -299,8 +296,10 @@ class SevereWeatherForecastDataset(MERRAInputData):
                 climate = load_climatology(output_time, self.data_path)
                 inpt["climate"] = transform(torch.tensor(climate))
 
+            print(input_files, output_file, lead_time)
+
             with xr.open_dataset(self.training_data_path / output_file) as data:
-                LOGGER.debug("Loading sever weather mask from %s.", output_file)
+                LOGGER.debug("Loading severe weather mask from %s.", output_file)
                 data = data[self.conus_slices].compute()
                 tornado = torch.tensor(data.tornado.data)
                 hail = torch.tensor(data.hail.data)
@@ -384,8 +383,234 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
         dynamic_in = transform(torch.stack(dynamic_in, 0))[None]
         static_in = transform(torch.tensor(static_in))[None]
-        input_time = torch.tensor(240.0)
-        lead_time = torch.tensor(12.0 + target_step * 24.0)
+        input_time = torch.tensor(24.0) / 24.0
+        lead_time = torch.tensor(12.0 + target_step * 24.0) / 24.0
+
+        x = {
+            "x": dynamic_in,
+            "static": static_in,
+            "lead_time": lead_time,
+            "input_time": input_time,
+        }
+
+        target_time = init_time + np.timedelta64(int(24 * (target_step + 0.5)), "h")
+
+        if self.climate:
+            climate = torch.tensor(load_climatology(target_time, self.data_path)).to(dtype=torch.float32)
+            x["climate"] = transform(climate)[None]
+
+        lat_bounds = self.conus_slices["latitude"]
+        lon_bounds = self.conus_slices["longitude"]
+
+        x.update({
+            "x_regional": x["x"][..., lat_bounds, lon_bounds],
+            "climate_regional": x["climate"][..., lat_bounds, lon_bounds],
+            "static_regional": x["static"][..., lat_bounds, lon_bounds],
+        })
+
+
+        #if self.obs_loader is not None:
+        #    obs = []
+        #    meta = []
+        #    for time_ind, time in enumerate(input_times):
+        #        obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
+        #        obs.append(obs_t)
+        #        meta.append(meta_t)
+        #    obs = torch.stack(obs, 0)
+        #    obs_mask = obs < -2.9
+        #    obs = torch.nan_to_num(obs, nan=-3.0)
+        #    meta = torch.stack(meta, 0)
+
+        #    x["obs"] = obs[None].repeat_interleave(n_steps, 0)
+        #    x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
+        #    x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
+
+        return x
+
+
+class SeverePrecipForecastDataset(SevereWeatherForecastDataset):
+    """
+    A PyTorch Dataset for forecasting sever weather occurrence.
+    """
+    def find_target_files(self, training_data_path: Path,) -> np.ndarray:
+        """
+        Find target files for training.
+        """
+        times = []
+        files = []
+
+        reference_data = "stage4_24"
+
+        prefix = f"{reference_data.lower()}"
+        pattern = f"**/{prefix}*.nc"
+        date_pattern = f"stage4_precip_%Y%m%d%H%M%S.nc"
+        pattern = "stage4_24/**/stage4_precip*"
+
+        for path in sorted(list(training_data_path.glob(pattern))):
+            try:
+                date = datetime.strptime(path.name, date_pattern)
+                date64 = to_datetime64(date)
+                files.append(str(path.relative_to(training_data_path)))
+                times.append(date64)
+            except ValueError:
+                continue
+
+        times = np.array(times)
+        files = np.array(files)
+        return times, files
+
+
+    def calculate_valid_samples(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        A tuple of index arrays containing the indices of input- and output files for all training data
+        samples satifying the requested input and lead time combination.
+
+        Return: A tuple '(input_indices, output_indices)' with `input_indices` of shape
+            '(n_samples, n_input_times)' containing the indices of all the input files for each data
+            samples. Similarly, 'output_indices' is a numpy.ndarray of shape '(n_samples, n_lead_times)'
+            containing the corresponding file indices to load for the output data.
+        """
+        input_indices = []
+        output_indices = []
+        for ind, sample_time in enumerate(self.input_times):
+            input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
+            output_times = [
+                sample_time + np.timedelta64(int(t_i * self.input_time), "h") for t_i in np.arange(0, self.max_steps) + 0.5
+            ]
+            output_times = [t_o for t_o in output_times if t_o in self.output_times]
+            valid = all([t_i in self.input_times for t_i in input_times])
+            if valid and len(output_times) > 0:
+
+                prev_ind = np.searchsorted(self.input_times, input_times[0])
+                input_indices.append([prev_ind, ind])
+
+                output_inds = []
+                for output_time in output_times:
+                    output_ind = np.searchsorted(self.output_times, output_time)
+                    output_inds.append(output_ind)
+                output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
+        return np.array(input_indices), np.array(output_indices)
+
+    def __len__(self):
+        return trunc(len(self.input_indices) * self.sampling_rate)
+
+    def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Load and return a single data point from the dataset.
+        """
+        lower = trunc(ind / self.sampling_rate)
+        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
+        if lower < upper:
+            ind = self.rng.integers(lower, upper)
+        else:
+            ind = lower
+
+        try:
+            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
+            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+
+            static_time = input_times[-1]
+            static_in = torch.tensor(load_static_input(static_time, self.data_path))
+
+            input_time = self.input_time
+
+            if self.center_meridionally:
+                transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+            else:
+                transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+            inpt = {
+                "x": transform(torch.stack(dynamic_in, 0)),
+                "static": transform(static_in),
+                "input_time": torch.tensor(input_time / 24.0).to(dtype=torch.float32),
+            }
+
+            inds = self.output_indices[ind]
+            inds = inds[0 <= inds]
+            output_ind = self.rng.choice(inds)
+            output_file = self.output_files[output_ind]
+            output_time = self.output_times[output_ind]
+
+            lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
+            inpt["lead_time"] = torch.tensor(lead_time / 24.0).to(dtype=torch.float32)
+
+            if self.climate:
+                climate = load_climatology(output_time, self.data_path)
+                inpt["climate"] = transform(torch.tensor(climate))
+
+            print(input_files, output_file, lead_time)
+
+            with xr.open_dataset(self.training_data_path / output_file) as data:
+                target = data.surface_precip.data
+            data.close()
+            del data
+
+            lat_bounds = self.conus_slices["latitude"]
+            lon_bounds = self.conus_slices["longitude"]
+
+            if self.local:
+                inpt.update({
+                    "x": inpt["x"][..., lat_bounds, lon_bounds],
+                    "climate": inpt["climate"][..., lat_bounds, lon_bounds],
+                    "static": inpt["static"][..., lat_bounds, lon_bounds],
+                })
+            else:
+                inpt.update({
+                    "x_regional": inpt["x"][..., lat_bounds, lon_bounds],
+                    "climate_regional": inpt["climate"][..., lat_bounds, lon_bounds],
+                    "static_regional": inpt["static"][..., lat_bounds, lon_bounds],
+                })
+            return inpt, target[..., lat_bounds, lon_bounds]
+
+        except Exception as exc:
+            raise exc
+            LOGGER.exception(
+                "Encountered an error when load training sample %s. Falling back to another "
+                " randomly-chosen sample.",
+                ind
+            )
+            new_ind = np.random.randint(0, len(self))
+            return self[new_ind]
+
+
+    def get_direct_forecast_input(self, init_time: np.datetime64, target_step: int) -> Dict[str, torch.Tensor]:
+        """
+        Get forecast input data to perform a continuous forecast over a given number of steps
+        using a direct forecasting model.
+
+        Args:
+            init_time: The initialization time of the forecast.
+            target_step: The time step to forecast.
+
+        Return:
+            A dictionary contraining the loaded input tensors.
+        """
+        input_times = [init_time + np.timedelta64(t_i * 24, "h") for t_i in [-1, 0]]
+        for input_time in input_times:
+            if input_time not in self.input_times:
+                raise ValueError(
+                    "Required input data for t=%s not available.",
+                    input_time
+                )
+
+        dynamic_in = []
+        for input_time in input_times:
+            ind = np.searchsorted(self.input_times, input_time)
+            dynamic_in.append(self.load_dynamic_data(self.input_files[ind]))
+
+        static_time = input_times[-1]
+        static_in = load_static_input(static_time, self.data_path)
+
+        if self.center_meridionally:
+            transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+        else:
+            transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+        dynamic_in = transform(torch.stack(dynamic_in, 0))[None]
+        static_in = transform(torch.tensor(static_in))[None]
+        input_time = torch.tensor(24.0) / 24.0
+        lead_time = torch.tensor(12.0 + target_step * 24.0) / 24.0
 
         x = {
             "x": dynamic_in,
