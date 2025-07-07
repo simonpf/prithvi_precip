@@ -126,7 +126,7 @@ def extract_severe_weather(
     """
     start_times = np.arange(
         np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00"),
-        np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00") + np.timedelta64(24, "h"),
+        np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00") + np.timedelta64(accumulate, "h"),
         np.timedelta64(granularity, "h")
     )
 
@@ -139,7 +139,6 @@ def extract_severe_weather(
         hail = get_hail_data().copy()
         wind = get_wind_data().copy()
         wind['mag'] = wind['mag'] * 1.15
-
 
         mask = (start_time <= tornado.time) * (tornado.time < end_time)
         tornado = tornado[mask]
