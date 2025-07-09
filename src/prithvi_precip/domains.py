@@ -8,7 +8,17 @@ from typing import Tuple
 
 import numpy as np
 
-from pyresample import AreaDefinition
+
+try:
+    from pyresample import AreaDefinition
+except ImportError:
+    class AreaDefinition:
+        """
+        Dummy class to handle mssing modules.
+        """
+        def __init__(self, *args, **kwargs):
+            pass
+
 
 
 MERRA = AreaDefinition(
