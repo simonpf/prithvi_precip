@@ -198,6 +198,22 @@ def load_static_input(time: np.datetime64, data_dir: Path) -> np.ndarray:
     return data.astype(np.float32)
 
 
+def to_datetime(time):
+    """
+    Try to convert a given time to a datetime object.
+    """
+    if isinstance(time, datetime):
+        return time
+    try:
+        if isinstance(time, np.ndarray) and np.issubdtype(time.dtype, np.datetime64):
+            time = time.astype("datetime64[s]")
+        return pd.to_datetime(time).to_pydatetime()
+    except ValueError:
+        raise ValueError(
+            f"Could not convert '{time}' to datetime object.",
+        )
+
+
 def to_datetime64(time):
     """
     Try to convert a given time to a numpy datetime64 object.
@@ -208,3 +224,5 @@ def to_datetime64(time):
         return pd.to_datetime(time).to_datetime64()
     except ValueError:
         raise ValueError("Could not convert '%s' to datetime object.")
+
+

@@ -7,7 +7,7 @@ Command line interface for extracting training and verification data for the Pri
 import click
 
 from prithvi_precip.data import imerg, merra2, merra2_precip, era5_precip, mrms, stage4, spc
-from prithvi_precip.obs import cpcir
+from prithvi_precip.obs import cpcir, goes, gridsat_goes, gpm
 
 
 @click.group()
@@ -24,3 +24,6 @@ prithvi_precip.command(name="extract_mrms_precip")(mrms.extract_precip)
 prithvi_precip.command(name="extract_stage4_precip")(stage4.extract_precip)
 prithvi_precip.command(name="extract_severe_weather")(spc.extract_training_data)
 prithvi_precip.command(name="extract_cpcir_obs")(cpcir.extract_cpcir_observations)
+prithvi_precip.command(name="extract_gridsat_goes_obs")(gridsat_goes.extract_goes_observations)
+prithvi_precip.command(name="extract_goes_obs")(goes.extract_goes_observations)
+prithvi_precip.command(name="extract_gpm_obs")(gpm.process_sensor_data)
