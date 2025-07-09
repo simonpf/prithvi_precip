@@ -183,6 +183,8 @@ def download_dynamic(
 
     if domain.upper() != "MERRA":
         lons, lats = domains.get_lonlats(domain)
+        lons = lons[0]
+        lats = lats[..., 0]
         data = data.interp(longitude=lons, latitude=lats)
 
     output_path = Path(output_path) / f"dynamic/{year:04}/{month:02}/{day:02}"
