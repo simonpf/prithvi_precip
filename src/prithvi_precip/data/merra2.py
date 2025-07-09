@@ -241,7 +241,7 @@ def extract_merra_data(
 
     if n_processes > 1:
         LOGGER.info(f"Using {n_processes} processes for downloading data.")
-        tasks = [(year, month, day, output_path, domain) for d in days]
+        tasks = [(year, month, day, output_path, domain) for day in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
@@ -257,9 +257,9 @@ def extract_merra_data(
     else:
         with Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(days))
-            for d in days:
+            for day in days:
                 try:
-                    download_dynamic(year, month, d, output_path, domain)
+                    download_dynamic(year, month, day, output_path, domain)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:
@@ -324,11 +324,10 @@ def extract_static_merra_data(
     all days of the month.
     """
     with Progress() as progress:
-        task_id = progress.add_task("Extracting data:", total=len(days))
-        for d in days:
-            try:
-                download_static(output_path, domain)
-            except Exception as e:
-                LOGGER.exception(f"Error processing day {d}: {e}")
-            finally:
-                progress.update(task_id, advance=1)
+        task_id = progress.add_task("Extracting data:", total=1)
+        try:
+            download_static(output_path, domain)
+        except Exception as e:
+            LOGGER.exception(f"Error extracting static data: {e}")
+        finally:
+            progress.update(task_id, advance=1)

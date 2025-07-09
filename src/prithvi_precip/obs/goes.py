@@ -155,6 +155,8 @@ def extract_observations(
                 if not output_path.parent.exists():
                         output_path.parent.mkdir(parents=True)
 
+                new_data.to_netcdf(output_path, encoding=encoding)
+
 
 def extract_observations_day(
         year: int,
