@@ -7,7 +7,7 @@ to CSU MLP system.
 """
 from datetime import datetime
 import logging
-from functools import partial, cached_property
+from functools import cache, partial, cached_property
 from math import trunc
 import os
 from pathlib import Path
@@ -17,6 +17,7 @@ from typing import Dict, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch import nn
+from scipy.signal import convolve
 import torch.distributed as dist
 import xarray as xr
 
@@ -248,6 +249,17 @@ class SevereWeatherForecastDataset(MERRAInputData):
                 output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
         return np.array(input_indices), np.array(output_indices)
 
+    @cache
+    def _smoothing_kernel(self, fwhm: float) -> np.ndarray:
+        ext = int(2 * fwhm)
+        x = np.arange(-ext, ext + 1, 1)
+        y = np.arange(-ext, ext + 1, 1)
+        xx, yy = np.meshgrid(x, y)
+        r = np.sqrt(xx ** 2 + yy ** 2)
+        k = np.exp(np.log(0.5) * (2.0 * r / fwhm) ** 2)
+        return k / k.sum()
+
+
     def __len__(self):
         return trunc(len(self.input_indices) * self.sampling_rate)
 
@@ -267,7 +279,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
             input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
             dynamic_in = [self.load_dynamic_data(path) for path in input_files]
 
-            static_time = input_times[-1]
+            static_time = input_times[-1] + np.random.choice([-2.0, -1.0, 0.0, 1.0, 2.0]) * np.timedelta64(24, "h")
             static_in = torch.tensor(load_static_input(static_time, self.data_path))
 
             input_time = self.input_time
@@ -293,27 +305,35 @@ class SevereWeatherForecastDataset(MERRAInputData):
             inpt["lead_time"] = torch.tensor(lead_time / 24.0).to(dtype=torch.float32)
 
             if self.climate:
-                climate = load_climatology(output_time, self.data_path)
+                clim_time = output_time + np.random.choice([-2.0, -1.0, 0.0, 1.0, 2.0]) * np.timedelta64(24, "h")
+                climate = load_climatology(clim_time, self.data_path)
                 inpt["climate"] = transform(torch.tensor(climate))
 
             print(input_files, output_file, lead_time)
 
             with xr.open_dataset(self.training_data_path / output_file) as data:
                 LOGGER.debug("Loading severe weather mask from %s.", output_file)
+
                 data = data[self.conus_slices].compute()
-                tornado = torch.tensor(data.tornado.data)
-                hail = torch.tensor(data.hail.data)
-                wind = torch.tensor(data.wind.data)
-                tornado = (tornado > 0)
-                hail = (hail > 0)
-                wind = (wind > 0)
-                severe = tornado + hail + wind
+                tornado = data.tornado.data
+                hail = data.hail.data
+                wind = data.wind.data
+
+                k = self._smoothing_kernel(3.0)
+                tornado = convolve(tornado, k, mode="same")
+                hail = convolve(hail, k, mode="same")
+                wind = convolve(wind, k, mode="same")
+
+                tornado = np.minimum(tornado, 1.0)
+                hail = np.minimum(hail, 1.0)
+                wind = np.minimum(wind, 1.0)
+                severe = np.minimum(tornado + hail + wind, 1.0)
 
                 target = {
-                    "tornado": tornado.to(dtype=torch.float32),
-                    "hail": hail.to(dtype=torch.float32),
-                    "wind": wind.to(dtype=torch.float32),
-                    "severe": severe.to(dtype=torch.float32)
+                    "tornado": torch.tensor(tornado).to(dtype=torch.float32),
+                    "hail": torch.tensor(hail).to(dtype=torch.float32),
+                    "wind": torch.tensor(wind).to(dtype=torch.float32),
+                    "severe": torch.tensor(severe).to(dtype=torch.float32)
                 }
 
 
