@@ -25,12 +25,16 @@ from pansat.products.satellite.gpm import (
     l1c_xcal2021v_f16_ssmis_v07b,
     l1c_xcal2021v_f17_ssmis_v07a,
     l1c_xcal2021v_f17_ssmis_v07b,
+    l1c_xcal2021v_f18_ssmis_v07a,
+    l1c_xcal2021v_f18_ssmis_v07b,
+    l1c_xcal2021v_f19_ssmis_v07a,
     l1c_xcal2019v_noaa20_atms_v07a,
     l1c_xcal2019v_npp_atms_v07a,
     l1c_xcal2016v_noaa19_mhs_v07a,
     l1c_xcal2016v_noaa18_mhs_v07a,
-    l1c_xcal2019v_metopc_mhs_v07a,
+    l1c_xcal2021v_metopa_mhs_v07a,
     l1c_xcal2016v_metopb_mhs_v07a,
+    l1c_xcal2019v_metopc_mhs_v07a,
     l1c_r_xcal2016c_gpm_gmi_v07a,
     l1c_r_xcal2016c_gpm_gmi_v07b,
     l1c_xcal2016v_gcomw1_amsr2_v07a
@@ -69,6 +73,8 @@ SENSORS = {
     "ssmis": [
         ("f16", 60e3, [l1c_xcal2021v_f16_ssmis_v07a, l1c_xcal2021v_f16_ssmis_v07b]),
         ("f17", 60e3, [l1c_xcal2021v_f17_ssmis_v07a, l1c_xcal2021v_f17_ssmis_v07b]),
+        ("f18", 60e3, [l1c_xcal2021v_f18_ssmis_v07a, l1c_xcal2021v_f18_ssmis_v07b]),
+        ("f19", 60e3, [l1c_xcal2021v_f19_ssmis_v07a]),
     ],
     "atms": [
         ("noaa20", 60e3, [l1c_xcal2019v_noaa20_atms_v07a]),
@@ -77,6 +83,7 @@ SENSORS = {
     "mhs": [
         ("noaa19", 60e3, [l1c_xcal2016v_noaa19_mhs_v07a]),
         ("noaa18", 60e3, [l1c_xcal2016v_noaa18_mhs_v07a]),
+        ("metop_a", 60e3, [l1c_xcal2021v_metopa_mhs_v07a]),
         ("metop_b", 60e3, [l1c_xcal2016v_metopb_mhs_v07a]),
         ("metop_c", 60e3, [l1c_xcal2019v_metopc_mhs_v07a]),
     ],
@@ -96,7 +103,7 @@ def extract_observations(
         platform_name: str,
         sensor_name: str,
         radius_of_influence: float,
-        tile_dims: Tuple[int, int] = (12, 18),
+        tile_dims: Tuple[int, int] = (30, 32),
         time_step = np.timedelta64(3, "h"),
 ) -> None:
     """
@@ -233,7 +240,7 @@ def extract_observations(
                     continue
                 obs_id = track_stats(base_path, obs_name, output.observations.data)
 
-                output = output.coarsen({"x": tile_dims[0], "y": tile_dims[1]})
+                output = output.coarsen({"y": tile_dims[0], "x": tile_dims[1]})
                 output = output.construct({
                     "x": ("tiles_zonal", "lon_tile"),
                     "y": ("tiles_meridional", "lat_tile")
@@ -336,7 +343,7 @@ def extract_observations_day(
 @click.argument('output_path', type=click.Path())
 @click.option("--n_processes", help="The number of process to use for the data extraction.", default=1)
 @click.option("--domain", help="The target domain.", default="MERRA")
-@click.option("--tile_dims", help="The number of tiles", default="32,32")
+@click.option("--tile_dims", help="The number of tiles", default="30,32")
 def process_sensor_data(
         sensor_name,
         year,

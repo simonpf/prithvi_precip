@@ -176,7 +176,7 @@ def extract_observations_day(
 @click.argument('month', type=int)
 @click.argument('output_path', type=click.Path())
 @click.option('--domain', type=str, default="MERRA")
-@click.option('--tile_dims', type=str, default="MERRA")
+@click.option('--tile_dims', type=str, default="30,32")
 @click.option('--n_processes', type=int, default=1)
 def extract_cpcir_observations(
         year: int,
