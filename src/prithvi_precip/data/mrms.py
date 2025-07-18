@@ -101,17 +101,18 @@ def extract_mrms_precip(
     data = data.sortby("time")
 
     time_shifted = data.time[:-accumulate]
-    data = data.rolling(time=accumulate, center=False).mean()[accumulate:]
+    data = data.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate, None)}]
     data = data.assign_coords(time=time_shifted)
 
     encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
     for time_ind in range(data.time.size):
         data_t = data[{'time': time_ind}]
-        time = to_datetime(data_t["time"].data)
-        fname = time.strftime(f"{time.year:04}/{time.month:02}/mrms_%Y%m%d%H%M.nc")
+        date = to_datetime(data_t["time"].data)
+        fname = date.strftime(f"mrms_{accumulate}/%Y/%m/%d/mrms_%Y%m%d%H%M.nc")
         output_file = output_path / fname
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        data_t.to_netcdf(output_path / fname, encoding=encoding)
+        output_file.parent.mkdir(exist_ok=True, parents=True)
+        encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
+        data_t.to_netcdf(output_file, encoding=encoding)
 
 
 @click.argument('granularity', type=int)

@@ -127,6 +127,10 @@ def load_climatology(time: np.datetime64, data_dir: Path) -> np.ndarray:
     hod = date.hour
 
     sfc_file = data_dir / "climatology" / f"climate_surface_doy{doy:03}_hour{hod:02}.nc"
+    if not sfc_file.exists():
+        sfc_file = (
+            data_dir / "climatology" / f"climate_surface_doy{doy:03}_hour00.nc"
+        )
     data_sfc = []
     with xr.open_dataset(sfc_file) as sfc_data:
         for var in SURFACE_VARS:
@@ -137,6 +141,11 @@ def load_climatology(time: np.datetime64, data_dir: Path) -> np.ndarray:
     vert_file = (
         data_dir / "climatology" / f"climate_vertical_doy{doy:03}_hour{hod:02}.nc"
     )
+    if not vert_file.exists():
+        vert_file = (
+            data_dir / "climatology" / f"climate_vertical_doy{doy:03}_hour00.nc"
+        )
+
     with xr.open_dataset(vert_file) as vert_data:
         for var in VERTICAL_VARS:
             data_vert.append(np.flip(vert_data[var].data.astype(np.float32), 0))

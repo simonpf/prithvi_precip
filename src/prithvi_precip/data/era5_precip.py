@@ -101,7 +101,7 @@ def extract_era5_precip(
 @click.argument('granularity', type=int)
 @click.argument('year', type=int)
 @click.argument('month', type=int)
-@click.argument('days', nargs=-1, type=list, required=False)
+@click.argument('days', nargs=-1, type=int, required=False)
 @click.argument('output_path', type=click.Path(writable=True))
 @click.option('--n_processes', default=1, type=int, help="Number of processes to use for downloading data.")
 def extract_precip(
@@ -126,6 +126,8 @@ def extract_precip(
     if len(days) == 0:
         _, n_days = monthrange(year, month)
         days = list(range(1, n_days + 1))
+    else:
+        days = list(map(int, days))
 
     output_path = Path(output_path)
     output_folder = output_path

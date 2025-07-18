@@ -559,8 +559,6 @@ class SeverePrecipForecastDataset(SevereWeatherForecastDataset):
                 climate = load_climatology(output_time, self.data_path)
                 inpt["climate"] = transform(torch.tensor(climate))
 
-            print(input_files, output_file, lead_time)
-
             with xr.open_dataset(self.training_data_path / output_file) as data:
                 target = data.surface_precip.data
             data.close()
