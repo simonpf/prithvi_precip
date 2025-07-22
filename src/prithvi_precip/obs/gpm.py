@@ -122,6 +122,7 @@ def extract_observations(
     target_grid = getattr(domains, domain.upper())
 
     l1c_obs = gpm_file.product.open(gpm_file)
+
     if "latitude" in l1c_obs:
         vars = [
             "latitude", "longitude", "tbs", "channels"
@@ -271,10 +272,6 @@ def extract_observations(
 
                 lock = FileLock(output_path.with_suffix(".lock"))
                 with lock:
-
-                    if output_path.exists():
-                        existing = xr.load_dataset(output_path)
-                        new_data = combine_tiles(existing, new_data)
 
                     new_data = split_tiles(output)
                     if output_path.exists():
