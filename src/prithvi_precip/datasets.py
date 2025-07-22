@@ -641,9 +641,10 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 deltas = deltas.astype("datetime64[s]")
                 delta_min = deltas.min()
                 delta_max = deltas.max()
-                weights = [0.5 + 0.5 * (delta - delta_min) / (delta_max - delta_min)]
+                weights = 0.5 + 0.5 * (delta - delta_min) / (delta_max - delta_min)
+                weights = weights.astype(np.float32)
             else:
-                weights = np.ones_like(deltas)
+                weights = np.ones_like(deltas).astype(np.float32)
             weights /= weights.sum()
 
             output_ind = self.rng.choice(inds, p=weights)
