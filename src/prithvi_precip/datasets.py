@@ -21,6 +21,7 @@ from prithvi_precip.utils import load_static_input, load_climatology
 import torch
 from torch import nn
 from torch.utils.data import Dataset
+from tqdm import tqdm
 import xarray as xr
 
 from prithvi_precip.data.merra2 import (
@@ -587,12 +588,16 @@ class DirectPrecipForecastDataset(MERRAInputData):
             output_times = [t_o for t_o in output_times if t_o in self.output_times]
             valid = all([t_i in self.input_times for t_i in input_times])
             if valid and len(output_times) > 0:
-                input_indices.append([ind - self.input_time // 3, ind])
+
+                prev_ind = np.searchsorted(self.input_times, input_times[0])
+                input_indices.append([prev_ind, ind])
+
                 output_inds = []
                 for output_time in output_times:
                     output_ind = np.searchsorted(self.output_times, output_time)
                     output_inds.append(output_ind)
                 output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
+
         return np.array(input_indices), np.array(output_indices)
 
     def __len__(self):
@@ -841,8 +846,8 @@ class ObservationLoader(Dataset):
         date = to_datetime(time)
         path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
 
-        observations = -3.0 * torch.ones(self.n_tiles + (self.observation_layers, 1) + self.tile_size)
-        meta_data = -3.0 * torch.ones(self.n_tiles + (self.observation_layers, 8) + self.tile_size)
+        observations = -1.5 * torch.ones(self.n_tiles + (self.observation_layers, 1) + self.tile_size)
+        meta_data = --1.5 * torch.ones(self.n_tiles + (self.observation_layers, 8) + self.tile_size)
 
         if not path.exists():
             LOGGER.warning(
