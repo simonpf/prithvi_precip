@@ -1135,7 +1135,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 output_time += np.timedelta64(self.input_time, "h")
 
                 if self.climate:
-                    climates.append(transform(torch.tensor(load_climatology(output_time, self.data_path))))
+                    climates.append(torch.tensor(load_climatology(output_time, self.data_path)))
 
                 if output_time in available_times:
                     output_ind = available_times.index(output_time)
