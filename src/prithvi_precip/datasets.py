@@ -1146,6 +1146,10 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 else:
                     precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
+
+            if 0 < len(climates):
+                x["climate"] = transform(torch.stack(climates, 0))
+
             return x, precip
 
         except Exception as exc:
