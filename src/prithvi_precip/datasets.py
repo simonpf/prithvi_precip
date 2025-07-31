@@ -112,7 +112,6 @@ class MERRAInputData(Dataset):
         """
         times = []
         files = []
-        print(training_data_path)
         for path in sorted(list(training_data_path.glob("dynamic/**/merra2_*.nc"))):
             try:
                 date = datetime.strptime(path.name, "merra2_%Y%m%d%H%M%S.nc")
@@ -581,6 +580,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         output_indices = []
         for ind, sample_time in enumerate(self.input_times):
             input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
+
             output_times = [
                 sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in np.arange(1, self.max_steps + 1)
             ]
@@ -824,8 +824,8 @@ class ObservationLoader(Dataset):
     @cache
     def get_minmax(self, obs_id: int):
         var_name = self.obs_vars[min(obs_id, len(self.obs_vars) - 1)]
-        min_val = self.stats_data[f"{var_name}_min"].data
-        max_val = self.stats_data[f"{var_name}_max"].data
+        #min_val = self.stats_data[f"{var_name}_min"].data
+        #max_val = self.stats_data[f"{var_name}_max"].data
         return 0, 300
 
     def has_obs(self, time: np.datetime64):
@@ -1078,23 +1078,23 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
     def __len__(self):
         return trunc(len(self.input_indices) * self.sampling_rate)
 
-    def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, sample_ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Load and return a single data point from the dataset.
         """
-        lower = trunc(ind / self.sampling_rate)
-        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
+        lower = trunc(sample_ind / self.sampling_rate)
+        upper = min(trunc((sample_ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
         if lower < upper:
-            ind = self.rng.integers(lower, upper)
+            sample_ind = self.rng.integers(lower, upper)
         else:
-            ind = lower
+            sample_ind = lower
 
         try:
-            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
-            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            input_files = [self.input_files[ind_in] for ind_in in self.input_indices[sample_ind]]
+            input_times = [self.input_times[ind_in] for ind_in in self.input_indices[sample_ind]]
             dynamic_in = [self.load_dynamic_data(path) for path in input_files]
 
-            static_times = input_times[-1] + np.arange(1, self.max_steps + 1) * np.timedelta64(self.input_time, "h")
+            static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.input_time, "h")
             static_in = [
                 torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
             ]
@@ -1116,27 +1116,35 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 "lead_time": torch.tensor(input_time).to(dtype=torch.float32),
             }
 
-            inds = self.output_indices[ind]
+            inds = self.output_indices[sample_ind]
 
             precip = []
             climates = []
 
-            output_time = self.input_times[-1] + np.timedelta64(self.input_time, "h")
-            available_times = [self.output_times[out_ind] for out_ind in self.output_indices[ind]]
+            available_times = [
+                self.output_times[out_ind] for out_ind in self.output_indices[sample_ind]
+                if 0 <= out_ind
+            ]
+            output_indices = [
+                out_ind for out_ind in self.output_indices[sample_ind] if 0 <= out_ind
+            ]
+            output_time = input_times[-1]
 
             for step in range(1, self.max_steps):
+
+                output_time += np.timedelta64(self.input_time, "h")
 
                 if self.climate:
                     climates.append(transform(torch.tensor(load_climatology(output_time, self.data_path))))
 
                 if output_time in available_times:
-                    out_ind = available_times.index(output_time)
-                    output_file = self.output_files[self.output_indices[ind][out_ind]]
+                    output_ind = available_times.index(output_time)
+                    output_file = self.output_files[output_indices[output_ind]]
                     with xr.load_dataset(self.training_data_path / output_file) as data:
                         LOGGER.debug("Loading precip data from %s.", output_file)
                         precip.append(torch.tensor(data.surface_precip.data.astype(np.float32)))
                 else:
-                    precip.append(torch.nan * torch.zeros_like((1, 360, 576)))
+                    precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
             return x, precip
 
@@ -1145,7 +1153,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             LOGGER.exception(
                 "Encountered an error when load training sample %s. Falling back to another "
                 " randomly-chosen sample.",
-                ind
+                sample_ind
             )
             new_ind = np.random.randint(0, len(self))
             return self[new_ind]
