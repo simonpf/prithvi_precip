@@ -111,8 +111,7 @@ class MERRAInputData(Dataset):
         """
         times = []
         files = []
-        pattern = re.compile(r"merra_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.nc")
-
+        print(training_data_path)
         for path in sorted(list(training_data_path.glob("dynamic/**/merra2_*.nc"))):
             try:
                 date = datetime.strptime(path.name, "merra2_%Y%m%d%H%M%S.nc")
@@ -1021,3 +1020,127 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
         x["obs_meta"] = meta
 
         return x, y
+
+
+class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
+    """
+    A PyTorch Dataset for loading precipitation forecast training data for autoregressive forecasts.
+    """
+    def __init__(
+            self,
+            training_data_path: Union[Path, str],
+            input_time: int = 3,
+            accumulation_period: int = 3,
+            max_steps: int = 24,
+            climate: bool = True,
+            sampling_rate: float = 1.0,
+            reference_data: str = "imerg",
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None,
+            weighted_sampling: bool = False
+    ):
+        """
+        Args:
+            training_data_path: The directory containing the dynamic input data.
+            input_time: The time difference between input samples.
+            accumulation_period: The precipitation accumulation period.
+            max_steps: The maximum number of timesteps to forecast precipitation.
+            climate: Whether to include climatology data in the input.
+            sampling_rate: Sub- or super-sample dataset.
+            reference_data: Name of the reference data source.
+            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
+                of the input data by one. If False, will use negative paddgin.
+            validation: Flat indicating whether the dataset is used to load validation or training data.
+            local_data: An optional path pointing to a location to which to copy the training data. This should
+                typically be node-local memory that can be accessed rapidly.
+            weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
+        """
+        super().__init__(
+            training_data_path=training_data_path,
+            input_time=input_time,
+            accumulation_period=accumulation_period,
+            max_steps=max_steps,
+            climate=climate,
+            sampling_rate=sampling_rate,
+            reference_data=reference_data,
+            center_meridionally=center_meridionally,
+            validation=validation,
+            local_data=local_data,
+            weighted_sampling=weighted_sampling
+        )
+
+    def __len__(self):
+        return trunc(len(self.input_indices) * self.sampling_rate)
+
+    def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Load and return a single data point from the dataset.
+        """
+        lower = trunc(ind / self.sampling_rate)
+        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
+        if lower < upper:
+            ind = self.rng.integers(lower, upper)
+        else:
+            ind = lower
+
+        try:
+            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
+            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+
+            static_times = input_times[-1] + np.arange(1, self.max_steps + 1) * np.timedelta64(self.input_time, "h")
+            static_in = [
+                torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
+            ]
+
+            input_time = self.input_time
+
+            # Remove one row along lat dimension.
+            pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+            if self.center_meridionally:
+                transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+            else:
+                transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+            x = {
+                "x": transform(torch.stack(dynamic_in, 0)),
+                "static": transform(torch.stack(static_in, 0)),
+                "input_time": torch.tensor(input_time).to(dtype=torch.float32),
+                "lead_time": torch.tensor(input_time).to(dtype=torch.float32),
+            }
+
+            inds = self.output_indices[ind]
+
+            precip = []
+            climates = []
+
+            output_time = self.input_times[-1] + np.timedelta64(self.input_time, "h")
+            available_times = [self.output_times[out_ind] for out_ind in self.output_indices[ind]]
+
+            for step in range(1, self.max_steps):
+
+                if self.climate:
+                    climates.append(transform(torch.tensor(load_climatology(output_time, self.data_path))))
+
+                if output_time in available_times:
+                    out_ind = available_times.index(output_time)
+                    output_file = self.output_files[self.output_indices[ind][out_ind]]
+                    with xr.load_dataset(self.training_data_path / output_file) as data:
+                        LOGGER.debug("Loading precip data from %s.", output_file)
+                        precip.append(torch.tensor(data.surface_precip.data.astype(np.float32)))
+                else:
+                    precip.append(torch.nan * torch.zeros_like((1, 360, 576)))
+
+            return x, precip
+
+        except Exception as exc:
+            raise exc
+            LOGGER.exception(
+                "Encountered an error when load training sample %s. Falling back to another "
+                " randomly-chosen sample.",
+                ind
+            )
+            new_ind = np.random.randint(0, len(self))
+            return self[new_ind]
