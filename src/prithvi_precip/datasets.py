@@ -1130,7 +1130,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             ]
             output_time = input_times[-1]
 
-            for step in range(1, self.max_steps):
+            for step in range(1, self.max_steps + 1):
 
                 output_time += np.timedelta64(self.input_time, "h")
 
