@@ -90,7 +90,7 @@ def extract_imerg_precip(
     data = data.sortby("time")
     if 0 < accumulate:
         time_shifted = data.time[:-(2 * accumulate - 1)]
-        data = data.rolling(time=accumulate * 2, center=False).mean()[{"time": slice(2 * accumulate - 1, 0)}]
+        data = data.rolling(time=accumulate * 2, center=False).mean()[{"time": slice(2 * accumulate - 1, None)}]
         data = data.assign_coords(time=time_shifted)
     encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
 

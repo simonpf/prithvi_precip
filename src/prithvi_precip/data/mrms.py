@@ -100,9 +100,10 @@ def extract_mrms_precip(
     })
     data = data.sortby("time")
 
-    time_shifted = data.time[:-accumulate]
-    data = data.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate, None)}]
-    data = data.assign_coords(time=time_shifted)
+    if 1 < accumulate:
+        time_shifted = data.time[:-(accumulate - 1)]
+        data = data.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate - 1, None)}]
+        data = data.assign_coords(time=time_shifted)
 
     encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
     for time_ind in range(data.time.size):
