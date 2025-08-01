@@ -59,9 +59,10 @@ def extract_era5_precip(
             surface_precip.append(data["tp"].compute())
     surface_precip = xr.concat(surface_precip, dim="time")
 
-    time_shifted = surface_precip.time[:-accumulate]
-    surface_precip = surface_precip.rolling(time=accumulate).mean()[:-accumulate]
-    surface_precip = surface_precip.assign_coords(time=time_shifted)
+    if 1 < accumulate:
+        time_shifted = surface_precip.time[:-(accumulate - 1)]
+        surface_precip = surface_precip.rolling(time=accumulate).mean()[{"time": slice(accumulate - 1, None)}]
+        surface_precip = surface_precip.assign_coords(time=time_shifted)
 
     lons = surface_precip.longitude.data
     lats = surface_precip.latitude.data
