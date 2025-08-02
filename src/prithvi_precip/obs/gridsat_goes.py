@@ -18,6 +18,7 @@ import click
 from filelock import FileLock
 from scipy.constants import speed_of_light
 import numpy as np
+from pansat import TimeRange
 from pansat.file_record import FileRecord
 from pansat.products.satellite.ncei import gridsat_goes
 from rich.progress import Progress
@@ -47,7 +48,7 @@ WAVELENGTHS = {
 
 def extract_observations(
         base_path: Path,
-        goes_files: FileRecord,
+        goes_file: FileRecord,
         domain: str,
         tile_dims: Tuple[int, int] = (32, 32),
         time_step = np.timedelta64(3, "h"),
@@ -80,12 +81,11 @@ def extract_observations(
         )
         data = data.stack(tiles=("tiles_meridional", "tiles_zonal"))
         data = data.transpose("tiles", "time", "lat_tile", "lon_tile")
-        print(data)
 
         for ch_ind in range(1, 7):
 
             obs = data[[f"ch{ch_ind}"]][{"time": 0}].rename({f"ch{ch_ind}": "observations"})
-            if ch_ind == 0:
+            if ch_ind == 1:
                 obs["observations"] = 100.0 * obs["observations"]
 
             time = obs.time.data
@@ -156,7 +156,8 @@ def extract_observations_day(
         day: int,
         output_path: Path,
         domain: str,
-        tile_dims: Tuple[int, int] = (30, 32)
+        tile_dims: Tuple[int, int] = (30, 32),
+        interval: int = 1
 ):
     """
     Extract observation data from all CPCIR files for a given day.
@@ -168,13 +169,17 @@ def extract_observations_day(
         output_path: The path to which to write the extracted observation data.
         domain: The name of the target region.
         tile_dims: The dimension of the tiles to use for the target region.
+        interval: The interval length in hours at which to extract observations.
     """
     start = datetime(year, month, day)
     end = start + timedelta(days=1)
-    recs = gridsat_goes.get(TimeRange(start, end))
+    time_steps = np.arange(start, end, np.timedelta64(interval, "h"))
+    recs = []
+    for step in time_steps:
+        recs += gridsat_goes.get(TimeRange(step + np.timedelta64(30, "m")))
     for rec in recs:
         try:
-            extract_observations(output_path, rec, domain=domain, tile_dims=tile_dims)
+            extract_observations(output_path, rec.local_path, domain=domain, tile_dims=tile_dims)
         except:
             LOGGER.exception(
                 "Encountered an error when processing input file %s.",
@@ -185,16 +190,39 @@ def extract_observations_day(
 @click.argument('year', type=int)
 @click.argument('month', type=int)
 @click.argument('output_path', type=click.Path())
-@click.option('--domain', type=str, default="MERRA")
-@click.option('--tile_dims', type=str, default="MERRA")
-@click.option('--n_processes', type=int, default=1)
+@click.option(
+    '--domain',
+    type=str,
+    default="MERRA",
+    help="The domain over which to extract the data."
+
+)
+@click.option(
+    '--tile_dims',
+    type=str,
+    default="30,32",
+    help="The dimension of the spatial tiles."
+)
+@click.option(
+    '--n_processes',
+    type=int,
+    default=1,
+    help="The number of processes to use to parallelize the extraction"
+)
+@click.option(
+    '--interval',
+    type=int,
+    default=3,
+    help="The interval at which to extract observations."
+)
 def extract_goes_observations(
         year: int,
         month: int,
         output_path: str,
         domain: str,
         tile_dims: Tuple[int, int] = (30, 32),
-        n_processes: int = 1
+        n_processes: int = 1,
+        interval: int = 1
 ):
     """
     Extract GOES observations for given year and month.
@@ -214,7 +242,7 @@ def extract_goes_observations(
 
     if n_processes > 1:
         LOGGER.info(f"[bold blue]Using {n_processes} processes for downloading data.[/bold blue]")
-        tasks = [(year, month, d, output_path, domain, tile_dims) for d in days]
+        tasks = [(year, month, d, output_path, domain, tile_dims, interval) for d in days]
 
         with (
                 ProcessPoolExecutor(max_workers=n_processes) as executor,
@@ -237,7 +265,7 @@ def extract_goes_observations(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_observations_day(year, month, d, output_path, domain, tile_dims)
+                    extract_observations_day(year, month, d, output_path, domain, tile_dims, interval)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:

@@ -17,10 +17,17 @@ from typing import Tuple
 
 from scipy.constants import speed_of_light
 import numpy as np
+from scipy.ndimage import zoom
 from pansat import FileRecord
 from pansat.time import to_datetime64, TimeRange
 from pansat.utils import resample_data
 from pansat.products.satellite.gpm import (
+    l1c_xcal2018v_f08_ssmi_v07a,
+    l1c_xcal2018v_f10_ssmi_v07a,
+    l1c_xcal2018v_f11_ssmi_v07a,
+    l1c_xcal2018v_f13_ssmi_v07a,
+    l1c_xcal2018v_f14_ssmi_v07a,
+    l1c_xcal2018v_f15_ssmi_v07a,
     l1c_xcal2021v_f16_ssmis_v07a,
     l1c_xcal2021v_f16_ssmis_v07b,
     l1c_xcal2021v_f17_ssmis_v07a,
@@ -28,10 +35,13 @@ from pansat.products.satellite.gpm import (
     l1c_xcal2021v_f18_ssmis_v07a,
     l1c_xcal2021v_f18_ssmis_v07b,
     l1c_xcal2021v_f19_ssmis_v07a,
+    l1c_xcal2017v_noaa15_amsub_v07a,
+    l1c_xcal2017v_noaa16_amsub_v07a,
+    l1c_xcal2017v_noaa17_amsub_v07a,
+    l1c_xcal2016v_noaa18_mhs_v07a,
+    l1c_xcal2016v_noaa19_mhs_v07a,
     l1c_xcal2019v_noaa20_atms_v07a,
     l1c_xcal2019v_npp_atms_v07a,
-    l1c_xcal2016v_noaa19_mhs_v07a,
-    l1c_xcal2016v_noaa18_mhs_v07a,
     l1c_xcal2021v_metopa_mhs_v07a,
     l1c_xcal2016v_metopb_mhs_v07a,
     l1c_xcal2019v_metopc_mhs_v07a,
@@ -60,6 +70,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 _CHANNEL_REGEXP = re.compile("([\d\.]+)\s*(?:GHz)?(?:\+-)?\s*(?:\+\/-)?\s*([\d\.]*)\s*(?:GHz)?\s*(\w+)-Pol")
+_CHANNEL_REGEXP_NO_POL = re.compile("([\d\.]+)\s*(?:\+-)?\s*(?:\+\/-)?\s*([\d\.]*)\s*(?:GHz)")
 
 
 SSMIS_PRODUCTS = [
@@ -93,6 +104,19 @@ SENSORS = {
     "amsr2": [
         ("gcomw1", 20e3, [l1c_xcal2016v_gcomw1_amsr2_v07a]),
     ],
+    "amsub": [
+        ("noaa15", 60e3, [l1c_xcal2017v_noaa15_amsub_v07a]),
+        ("noaa15", 60e3, [l1c_xcal2017v_noaa16_amsub_v07a]),
+        ("noaa15", 60e3, [l1c_xcal2017v_noaa17_amsub_v07a]),
+    ],
+    "ssmi": [
+        ("f08", 60e3, [l1c_xcal2018v_f08_ssmi_v07a]),
+        ("f10", 60e3, [l1c_xcal2018v_f10_ssmi_v07a]),
+        ("f11", 60e3, [l1c_xcal2018v_f11_ssmi_v07a]),
+        ("f13", 60e3, [l1c_xcal2018v_f13_ssmi_v07a]),
+        ("f14", 60e3, [l1c_xcal2018v_f14_ssmi_v07a]),
+        ("f15", 60e3, [l1c_xcal2018v_f15_ssmi_v07a]),
+    ]
 }
 
 
@@ -131,6 +155,7 @@ def extract_observations(
 
     swath_ind = 1
     while f"latitude_s{swath_ind}" in l1c_obs:
+
         freqs = []
         offsets = []
         pols = []
@@ -143,6 +168,18 @@ def extract_observations(
             else:
                 offsets.append(float(offs))
             pols.append(pol)
+
+        # Need special case for AMSU-B :/
+        if len(freqs) == 0:
+            for match in _CHANNEL_REGEXP_NO_POL.findall(l1c_obs[f"tbs_s{swath_ind}"].attrs["LongName"]):
+                freq, offs = match
+                freqs.append(float(freq))
+                if offs == "":
+                    offsets.append(0.0)
+                else:
+                    offsets.append(float(offs))
+                pols.append("QV")
+
 
         swath_data = l1c_obs[[
             f"longitude_s{swath_ind}",
@@ -157,6 +194,13 @@ def extract_observations(
         sensor_lons = l1c_obs["spacecraft_longitude"].data
         sensor_lats = l1c_obs["spacecraft_latitude"].data
         sensor_alt = l1c_obs["spacecraft_altitude"].data * 1e3
+
+        zoom_factor = fp_lons.shape[0] / sensor_lons.shape[0]
+        if zoom_factor > 1:
+            sensor_lons = zoom(sensor_lons, zoom_factor)
+            sensor_lats = zoom(sensor_lats, zoom_factor)
+            sensor_alt = zoom(sensor_alt, zoom_factor)
+
         zenith, azimuth, viewing_angle = calculate_angles(
             fp_lons,
             fp_lats,
@@ -198,6 +242,7 @@ def extract_observations(
         valid = np.isfinite(otime)
 
         for time in times:
+
             for chan_ind, (freq, offset, pol) in enumerate(zip(freqs, offsets, pols)):
 
                 mask = (
@@ -293,6 +338,7 @@ def extract_observations(
                         output_path.parent.mkdir(parents=True)
 
                     new_data.to_netcdf(output_path, encoding=encoding)
+                    print("WRITING RESULTS :: ", output_path)
 
         swath_ind += 1
 
@@ -323,8 +369,23 @@ def extract_observations_day(
         for pansat_product in pansat_products:
             start = datetime(year, month, day)
             end = start + timedelta(days=1)
+            LOGGER.info("Retrieving files for product %s.",
+                pansat_product.name,
+            )
             recs = pansat_product.get(TimeRange(start, end))
+            LOGGER.info(
+                "Found %s files for product %s on %s-%s-%s.",
+                len(recs),
+                pansat_product.name,
+                year,
+                month,
+                day
+            )
             for rec in recs:
+                LOGGER.info(
+                    "Processing %s.",
+                    rec.local_path
+                )
                 try:
                     extract_observations(output_path, rec, domain, platform_name, sensor, roi, tile_dims=tile_dims)
                 except:

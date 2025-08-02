@@ -5,10 +5,26 @@ prithvi_precip.cli
 Command line interface for extracting training and verification data for the Prithvi Precip model.
 """
 import click
+import logging
+
+from rich.console import Console
+from rich.logging import RichHandler
 
 from prithvi_precip.data import imerg, merra2, merra2_precip, era5_precip, mrms, stage4, spc
 from prithvi_precip.obs import cpcir, goes, gridsat_goes, gpm
 
+
+# Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[RichHandler()]
+)
+logger = logging.getLogger("prithvi_precip")
+console = Console()
+
+
+LOGGER = logging.getLogger(__name__)
 
 @click.group()
 def prithvi_precip():
