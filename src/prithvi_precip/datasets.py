@@ -482,13 +482,14 @@ class DirectPrecipForecastDataset(MERRAInputData):
             training_local
         )
         input_files = []
-        for ind in local_input_indices:
-            input_files += list(self.input_files[ind])
+        for inds in local_input_indices:
+            input_files += list(self.input_files[inds])
         input_files = set(input_files)
 
         output_files = []
-        for ind in local_output_indices:
-            output_files += list(self.output_files[ind])
+        for inds in local_output_indices:
+            inds = [ind for ind in inds if 0 <= ind]
+            output_files += list(self.output_files[out_inds])
         output_files = set(output_files)
 
         all_files = input_files.union(output_files)
