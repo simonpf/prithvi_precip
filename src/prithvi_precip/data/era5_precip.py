@@ -61,7 +61,7 @@ def extract_era5_precip(
 
     if 1 < accumulate:
         time_shifted = surface_precip.time[:-(accumulate - 1)]
-        surface_precip = surface_precip.rolling(time=accumulate).mean()[{"time": slice(accumulate - 1, None)}]
+        surface_precip = surface_precip.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate - 1, None)}]
         surface_precip = surface_precip.assign_coords(time=time_shifted)
 
     lons = surface_precip.longitude.data
