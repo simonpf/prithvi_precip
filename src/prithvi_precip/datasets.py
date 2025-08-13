@@ -1153,7 +1153,7 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             accumulation_period=accumulation_period,
             max_steps=max_steps,
             climate=climate,
-            sampling_rate=sampling_rate,
+            sampling_rate=1.0,
             reference_data=reference_data,
             center_meridionally=center_meridionally,
             validation=validation,
