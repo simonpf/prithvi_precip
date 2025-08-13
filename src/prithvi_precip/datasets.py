@@ -299,9 +299,9 @@ class MERRAInputData(Dataset):
         Return:
             A dictionary contraining the loaded input tensors.
         """
-        input_times = [init_time + np.timedelta64(t_i * self.time_step, "h") for t_i in [-1, 0]]
+        input_times = [init_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
         for input_time in input_times:
-            if input_time not in self.times:
+            if input_time not in self.input_times:
                 raise ValueError(
                     "Required input data for t=%s not available.",
                     input_time
@@ -309,7 +309,7 @@ class MERRAInputData(Dataset):
 
         dynamic_in = []
         for input_time in input_times:
-            ind = np.searchsorted(self.times, input_time)
+            ind = np.searchsorted(self.input_times, input_time)
             dynamic_in.append(self.load_dynamic_data(self.input_files[ind]))
 
         static_time = input_times[-1]
@@ -322,8 +322,8 @@ class MERRAInputData(Dataset):
 
         dynamic_in = transform(torch.stack(dynamic_in, 0))[None].repeat(n_steps, 1, 1, 1, 1)
         static_in = transform(torch.tensor(static_in))[None].repeat(n_steps, 1, 1, 1)
-        input_time = self.input_times[0] * torch.ones(n_steps)
-        lead_time = self.time_step * torch.arange(1, n_steps + 1).to(dtype=torch.float32)
+        input_time = self.input_time * torch.ones(n_steps)
+        lead_time = self.input_time * torch.arange(1, n_steps + 1).to(dtype=torch.float32)
 
         x = {
             "x": dynamic_in,
@@ -333,9 +333,9 @@ class MERRAInputData(Dataset):
         }
 
         if self.climate:
-            output_times = [init_time + step * np.timedelta64(self.time_step, "h") for step in range(1, n_steps + 1)]
+            output_times = [init_time + step * np.timedelta64(self.input_time, "h") for step in range(1, n_steps + 1)]
             climate = [torch.tensor(load_climatology(time, self.data_path)) for time in output_times]
-            climate = transform(torch.stack(torch.tensor(climate)))
+            climate = transform(torch.stack(climate))
             x["climate"] = climate
 
         #if self.obs_loader is not None:
@@ -373,13 +373,45 @@ class MERRAInputData(Dataset):
         Return:
             An iterator yielding the input data in batches of the requested size.
         """
-        x = self.get_forecast_input(init_time, n_steps=n_steps)
+        x = self.get_direct_forecast_input(init_time, n_steps=n_steps)
         batch_start = 0
         n_samples = x["x"].shape[0]
         while batch_start < n_samples:
             batch_end = batch_start + batch_size
             yield {name: tnsr[batch_start:batch_end] for name, tnsr in x.items()}
             batch_start = batch_end
+
+
+class GEOSInputDataset(Dataset):
+    """
+    A PyTorch Dataset for loading GOES analysis input data.
+    """
+    def find_merra_files(self, training_data_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Gather all available MERRA2 files paths and extract available times.
+
+        Args:
+            training_data_path: Path object pointing to the directory containing the training data.
+
+        Return:
+            A tuple containing arrays of available inputs times and corresponding file
+            paths.
+        """
+        times = []
+        files = []
+        for path in sorted(list(training_data_path.glob("dynamic/**/geos_*.nc"))):
+            try:
+                date = datetime.strptime(path.name, "goes_%Y%m%d%H%M%S.nc")
+                date64 = to_datetime64(date)
+
+                files.append(str(path.relative_to(training_data_path)))
+                times.append(date64)
+            except ValueError:
+                continue
+
+        times = np.array(times)
+        files = np.array(files)
+        return times, files
 
 
 class DirectPrecipForecastDataset(MERRAInputData):
@@ -399,7 +431,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
-            weighted_sampling: bool = False
+            weighted_sampling: bool = False,
+            source: str = "merra2"
     ):
         """
         Args:
@@ -416,6 +449,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             local_data: An optional path pointing to a location to which to copy the training data. This should
                 typically be node-local memory that can be accessed rapidly.
             weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
+            source: The source of the input data: 'merra2' or 'geos'
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
@@ -431,6 +465,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         if local_data is not None:
             self.local_data = Path(local_data)
         self.weighted_sampling = weighted_sampling
+        self.source = source
 
         self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
         self.output_times, self.output_files = self.find_precip_files(
@@ -446,6 +481,33 @@ class DirectPrecipForecastDataset(MERRAInputData):
         if self.local_data is not None:
             self.split_and_copy_files()
 
+    def find_merra_files(self, training_data_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Gather all available MERRA2 files paths and extract available times.
+
+        Args:
+            training_data_path: Path object pointing to the directory containing the training data.
+
+        Return:
+            A tuple containing arrays of available inputs times and corresponding file
+            paths.
+        """
+        times = []
+        files = []
+
+        for path in sorted(list(training_data_path.glob(f"dynamic/**/{self.source}_*.nc"))):
+            try:
+                date = datetime.strptime(path.name, f"{self.source}_%Y%m%d%H%M%S.nc")
+                date64 = to_datetime64(date)
+
+                files.append(str(path.relative_to(training_data_path)))
+                times.append(date64)
+            except ValueError:
+                continue
+
+        times = np.array(times)
+        files = np.array(files)
+        return times, files
 
     def split_and_copy_files(self) -> None:
         """
@@ -488,7 +550,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
 
         output_files = []
         for inds in local_output_indices:
-            inds = [ind for ind in inds if 0 <= ind]
+            out_inds = [ind for ind in inds if 0 <= ind]
             output_files += list(self.output_files[out_inds])
         output_files = set(output_files)
 
@@ -682,6 +744,54 @@ class DirectPrecipForecastDataset(MERRAInputData):
             return self[new_ind]
 
 
+    def get_forecast_input(self, init_time: np.datetime64, n_steps: int):
+
+        input_times = [init_time - np.timedelta64(self.input_time, "h"), init_time]
+
+        input_ind = np.searchsorted(self.input_times, input_times[0])
+        input_time = self.input_times[input_ind]
+        if input_time != input_times[0]:
+            raise ValueError(
+                "Missing required input for time %s.",
+                input_times[0]
+            )
+        dynamic_in = [self.load_dynamic_data(self.input_files[input_ind])]
+        input_ind = np.searchsorted(self.input_times, input_times[1])
+        input_time = self.input_times[input_ind]
+        if input_time != input_times[1]:
+            raise ValueError(
+                "Missing required input for time %s.",
+                input_times[1]
+            )
+        dynamic_in += [self.load_dynamic_data(self.input_files[input_ind])]
+
+
+        static_time = input_times[-1]
+        static_in = torch.tensor(load_static_input(static_time, self.data_path))
+
+        if self.center_meridionally:
+            transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+        else:
+            transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+
+        inpt = {
+            "x": (transform(torch.stack(dynamic_in, 0))[None]).repeat_interleave(n_steps, dim=0),
+            "static": (transform(static_in)[None]).repeat_interleave(n_steps, dim=0),
+            "input_time": ((torch.tensor(self.input_time).to(dtype=torch.float32))[None]).repeat_interleave(n_steps, dim=0),
+        }
+
+        output_times = init_time + np.timedelta64(self.input_time, "h") * np.arange(1, n_steps + 1)
+        climates = []
+        if self.climate:
+            for output_time in output_time:
+                climates.append(transform(load_climatology(output_time, self.data_path)))
+
+        climates = torch.stack(climates)
+        x["climate"] = climates
+
+        return inpt
+
+
 class ObservationLoader(Dataset):
     """
     PyTorch dataset for loading satellite observations as input for
@@ -711,6 +821,70 @@ class ObservationLoader(Dataset):
         self.freq_min = 1.0
         self.freq_max = 30e3
         self.file_regexp = None
+
+    def copy_files(
+            self,
+            input_times: np.ndarray,
+            input_time: int,
+            local_data: Path,
+            validation: bool = False
+    ) -> None:
+        """
+        Shards data across nodes and copies them to the location pointed to by self.local_data.
+        """
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        base_folder = self.observation_path.parent.parent.name
+        if validation:
+            obs_local = local_data / base_folder / f"validation_data_{local_rank:02}" / "obs"
+        else:
+            obs_local = local_data / base_folder / f"training_data_{local_rank:02}" / "obs"
+        obs_local.mkdir(exist_ok=True, parents=True)
+
+        obs_files = []
+
+        for time in input_times:
+
+            date = to_datetime(time)
+            path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
+            if path.exists():
+                obs_files.append(path.relative_to(self.observation_path))
+
+            date = to_datetime(time - np.timedelta64(input_time, "h"))
+            path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
+            if path.exists():
+                obs_files.append(path.relative_to(self.observation_path))
+
+        obs_files = list(set(obs_files))
+        # Copy input and output samples.
+        LOGGER.info(
+            "Copying %s observations files to local directory %s.",
+            len(obs_files),
+            obs_local
+        )
+
+        for path in obs_files:
+            rel_path = Path(path)
+            target_path = obs_local / rel_path
+            if not target_path.exists():
+                target_path.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy2(self.observation_path / rel_path, target_path)
+
+        if local_rank == 0 and not validation:
+            LOGGER.info(
+                "Copying static files to temporary directory."
+            )
+            stats = obs_local / "stats.nc"
+            if not stats.exists():
+                shutil.copy2(self.observation_path / "stats.nc", obs_local / "stats.nc")
+        else:
+            stats = obs_local / "stats.nc"
+            while not stats.exists():
+                sleep(0.1)
+
+        rank = int(os.environ.get("RANK", 0))
 
     def worker_init_fn(self, w_id: int) -> None:
         """
@@ -824,7 +998,7 @@ class ObservationLoader(Dataset):
 
     @cache
     def get_minmax(self, obs_id: int):
-        var_name = self.obs_vars[min(obs_id, len(self.obs_vars) - 1)]
+        #var_name = self.obs_vars[min(obs_id, len(self.obs_vars) - 1)]
         #min_val = self.stats_data[f"{var_name}_min"].data
         #max_val = self.stats_data[f"{var_name}_max"].data
         return 0, 300
@@ -927,71 +1101,76 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
     """
     def __init__(
             self,
-            root_dir: Union[Path, str],
-            time_step: int = 3,
+            training_data_path: Union[Path, str],
+            input_time: int = 3,
+            accumulation_period: int = 3,
             max_steps: int = 24,
-            sentinel: float = -3.0,
-            n_tiles: Tuple[int, int] = (12, 18),
-            tile_size: Tuple[int, int] = (30, 32),
             climate: bool = False,
             sampling_rate: float = 1.0,
-            reference_data: str = "IMERG"
+            reference_data: str = "imerg",
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None,
+            weighted_sampling: bool = False,
+            source: str = "merra2",
+            n_tiles: Tuple[int, int] = (12, 18),
+            tile_size: Tuple[int, int] = (30, 32),
     ):
         """
         Args:
-            root_dir (str): Root directory containing year/month/day folders.
-            time_step: The forecast time step.
+            training_data_path: A path pointing to the directory containing the training data.
+            input_time: The time step between consecutive model inputs.
+            max_steps: The maximum number of steps to forecast.
+            sentinel: The value to use to represent missing values.
+        Args:
+            training_data_path: The directory containing the dynamic input data.
+            input_time: The time difference between input samples.
+            accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
+            climate: Whether to include climatology data in the input.
+            sampling_rate: Sub- or super-sample dataset.
+            reference_data: Name of the reference data source.
+            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
+                of the input data by one. If False, will use negative paddgin.
+            validation: Flat indicating whether the dataset is used to load validation or training data.
+            local_data: An optional path pointing to a location to which to copy the training data. This should
+                typically be node-local memory that can be accessed rapidly.
+            weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
+            source: The source of the input data: 'merra2' or 'geos'
+            n_tiles: The number of global observations tiles.
+            tile_size: The size of each tile.
         """
-        root_dir = Path(root_dir)
+        training_data_path = Path(training_data_path)
         self.obs_loader = ObservationLoader(
-            root_dir / "obs",
+            training_data_path / "obs",
             n_tiles=n_tiles,
             tile_size=tile_size,
             observation_layers=32
         )
         super().__init__(
-            root_dir=root_dir,
-            time_step=time_step,
+            training_data_path=training_data_path,
+            input_time=input_time,
+            accumulation_period=accumulation_period,
             max_steps=max_steps,
             climate=climate,
-            sampling_rate=1.0,
+            sampling_rate=sampling_rate,
             reference_data=reference_data,
-            augment=False
+            center_meridionally=center_meridionally,
+            validation=validation,
+            local_data=local_data,
+            weighted_sampling=weighted_sampling,
+            source=source,
         )
         self._sampling_rate = sampling_rate
         self.rng = np.random.default_rng(seed=42)
 
-
-    def calculate_valid_samples(self) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        A tuple of index arrays containing the indices of input- and output files for all training data
-        samples satifying the requested input and lead time combination.
-
-        Return: A tuple '(input_indices, output_indices)' with `input_indices` of shape
-            '(n_samples, n_input_times)' containing the indices of all the input files for each data
-            samples. Similarly, 'output_indices' is a numpy.ndarray of shape '(n_samples, n_lead_times)'
-            containing the corresponding file indices to load for the output data.
-        """
-        input_indices = []
-        output_indices = []
-        for ind in range(self.input_times.size):
-            sample_time = self.input_times[ind]
-            input_times = [sample_time + np.timedelta64(t_i * self.time_step, "h") for t_i in [-1, 0]]
-            output_times = [
-                sample_time + np.timedelta64(t_i * self.time_step, "h") for t_i in np.arange(1, self.max_steps + 1)
-            ]
-            output_times = [t_o for t_o in output_times if t_o in self.output_times]
-            valid = all([t_i in self.input_times for t_i in input_times])
-            if valid and len(output_times) > 0:
-                input_indices.append([ind - self.time_step // 3, ind])
-                output_inds = []
-                for output_time in output_times:
-                    output_ind = np.searchsorted(self.output_times, output_time)
-                    output_inds.append(output_ind)
-                output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
-        return np.array(input_indices), np.array(output_indices)
-
+        if self.local_data:
+            self.obs_loader.copy_files(
+                self.input_times,
+                self.input_time,
+                self.local_data
+            )
+            self.obs_loader.observation_path = self.training_data_path / "obs"
 
     def __len__(self):
         return trunc(len(self.input_indices) * self._sampling_rate)

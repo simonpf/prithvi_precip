@@ -235,3 +235,10 @@ def to_datetime64(time):
         raise ValueError("Could not convert '%s' to datetime object.")
 
 
+def get_date(path: Path) -> datetime:
+    """
+    Helper function to extract the initialization time from a forecast file.
+    """
+    date_str = path.name.split("_")[-1][:-3]
+    date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+    return datetime(year=date.year, month=date.month, day=date.day, hour=date.hour)
