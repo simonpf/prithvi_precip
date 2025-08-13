@@ -1105,7 +1105,7 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             input_time: int = 3,
             accumulation_period: int = 3,
             max_steps: int = 24,
-            climate: bool = False,
+            climate: bool = True,
             sampling_rate: float = 1.0,
             reference_data: str = "imerg",
             center_meridionally: bool = True,
