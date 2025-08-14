@@ -1082,8 +1082,6 @@ class ObservationLoader(Dataset):
                     meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
                     meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
                 except Exception as exc:
-                    raise exc
-
                     LOGGER.warning(
                         "Encountered an error when loading observations from file '%s'.",
                         path
