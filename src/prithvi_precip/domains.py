@@ -89,15 +89,17 @@ def get_lon_lat_bins(domain: str) -> Tuple[np.ndarray, np.ndarray]:
     """
     domain = globals()[domain.upper()]
     lons, lats = domain.get_lonlats()
+    lons = lons[0]
+    lats = lats[..., 0]
 
     lon_bins = np.zeros(lons.size + 1)
     lon_bins[1:-1] = 0.5 * (lons[1:] + lons[:-1])
-    lon_bins[0] = lon_bins[1] - (lons_bins[2] - lon_bins[1])
-    lon_bins[-1] = lon_bins[-2] + (lons_bins[-2] - lon_bins[-3])
+    lon_bins[0] = lon_bins[1] - (lon_bins[2] - lon_bins[1])
+    lon_bins[-1] = lon_bins[-2] + (lon_bins[-2] - lon_bins[-3])
 
     lat_bins = np.zeros(lats.size + 1)
     lat_bins[1:-1] = 0.5 * (lats[1:] + lats[:-1])
-    lat_bins[0] = lat_bins[1] - (lats_bins[2] - lat_bins[1])
-    lat_bins[-1] = lat_bins[-2] + (lats_bins[-2] - lat_bins[-3])
+    lat_bins[0] = lat_bins[1] - (lat_bins[2] - lat_bins[1])
+    lat_bins[-1] = lat_bins[-2] + (lat_bins[-2] - lat_bins[-3])
 
     return lon_bins, lat_bins
