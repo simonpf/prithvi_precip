@@ -728,6 +728,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
             with xr.load_dataset(self.training_data_path / output_file) as data:
                 LOGGER.debug("Loading precip data from %s.", output_file)
                 precip = torch.tensor(data.surface_precip.data.astype(np.float32))
+                if self.reference_data.startswith("era5"):
+                    precip = 1e3 * precip
 
             coords = x["static"][:2]
 
@@ -1320,7 +1322,10 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                     output_file = self.output_files[output_indices[output_ind]]
                     with xr.load_dataset(self.training_data_path / output_file) as data:
                         LOGGER.debug("Loading precip data from %s.", output_file)
-                        precip.append(torch.tensor(data.surface_precip.data.astype(np.float32)))
+                        precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+                        if self.reference_data.startswith("era5"):
+                            precip_s = 1e3 * precip_s
+                        precip.append(precip_s)
                 else:
                     precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
