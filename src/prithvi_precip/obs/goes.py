@@ -124,7 +124,7 @@ def extract_observations(
         obs["frequency"] = (("tiles",), frequency * ones)
         obs["offset"] = (("tiles",), frequency * ones)
         obs["polarization"] = (("tiles",), 0 * ones.astype(np.int8))
-        obs["obs_id"] = (("tiles",), obs_id * ones.astype(np.int8))
+        obs["obs_id"] = (("tiles",), obs_id * ones.astype(np.int16))
         obs["time_offset"] = (
         ("tiles", "lat_tile", "lon_tile"), rel_time.astype("timedelta64[m]").astype("float32") * np.ones((n_tiles, height, width))
         )

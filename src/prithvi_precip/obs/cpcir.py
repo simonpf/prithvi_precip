@@ -103,7 +103,7 @@ def extract_observations(
         cpcir_obs_t["frequency"] = (("tiles",), frequency * ones)
         cpcir_obs_t["offset"] = (("tiles",), frequency * ones)
         cpcir_obs_t["polarization"] = (("tiles",), 0 * ones.astype(np.int8))
-        cpcir_obs_t["obs_id"] = (("tiles",), obs_id * ones.astype(np.int8))
+        cpcir_obs_t["obs_id"] = (("tiles",), obs_id * ones.astype(np.int16))
         cpcir_obs_t["time_offset"] = (
             ("tiles", "lat_tile", "lon_tile"), rel_time.astype("timedelta64[m]").astype("float32") * np.ones((n_tiles, height, width))
         )

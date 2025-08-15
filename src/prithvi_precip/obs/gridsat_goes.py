@@ -116,7 +116,7 @@ def extract_observations(
             obs["frequency"] = (("tiles",), frequency * ones)
             obs["offset"] = (("tiles",), frequency * ones)
             obs["polarization"] = (("tiles",), 0 * ones.astype(np.int8))
-            obs["obs_id"] = (("tiles",), obs_id * ones.astype(np.int8))
+            obs["obs_id"] = (("tiles",), obs_id * ones.astype(np.int16))
             obs["time_offset"] = (
                 ("tiles", "lat_tile", "lon_tile"), rel_time.astype("timedelta64[m]").astype("float32") * np.ones((n_tiles, height, width))
             )
@@ -176,7 +176,7 @@ def extract_observations_day(
     time_steps = np.arange(start, end, np.timedelta64(interval, "h"))
     recs = []
     for step in time_steps:
-        recs += gridsat_goes.get(TimeRange(step + np.timedelta64(30, "m")))
+        recs += gridsat_goes.get(TimeRange(step, step + np.timedelta64(30, "m")))
     for rec in recs:
         try:
             extract_observations(output_path, rec.local_path, domain=domain, tile_dims=tile_dims)

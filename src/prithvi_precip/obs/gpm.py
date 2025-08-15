@@ -308,7 +308,7 @@ def extract_observations(
                 output["frequency"] = (("tiles",), frequency * ones)
                 output["offset"] = (("tiles",), offset * ones)
                 output["polarization"] = (("tiles",), polarization * ones.astype(np.int8))
-                output["obs_id"] = (("tiles",), obs_id * ones.astype(np.int8))
+                output["obs_id"] = (("tiles",), obs_id * ones.astype(np.int16))
 
                 new_data = split_tiles(output)
 
