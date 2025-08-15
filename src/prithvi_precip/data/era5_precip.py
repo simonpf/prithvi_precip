@@ -17,7 +17,7 @@ from rich.progress import Progress
 from scipy.stats import binned_statistic_2d
 import xarray as xr
 
-from precipfm.definitions import LAT_BINS, LON_BINS
+from prithvi_precip.domains import get_lon_lat_bins
 
 
 LOGGER = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def extract_era5_precip(
         year: int,
         month: int,
         day: int,
+        domain: str,
         accumulate: int,
         granularity: int,
         output_path: Path,
@@ -69,20 +70,30 @@ def extract_era5_precip(
     lons, lats = np.meshgrid(lons, lats, indexing="xy")
     lons = lons
     lons[180 < lons] -= 360
-    lats_r = 0.5 * (LAT_BINS[1:] + LAT_BINS[:-1])
-    lons_r = 0.5 * (LON_BINS[1:] + LON_BINS[:-1])
+
+    surface_precip = surface_precip.assign_coords(longitude=lons[0])
+    surface_precip = surface_precip.sortby("longitude")
+
+    lon_bins, lat_bins = get_lon_lat_bins(domain)
+
+    lats_r = 0.5 * (lat_bins[1:] + lat_bins[:-1])
+    lons_r = 0.5 * (lon_bins[1:] + lon_bins[:-1])
+    dlon = lons_r[1] - lons_r[0]
 
     start_time = np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00")
     end_time = start_time + np.timedelta64(1, "D")
     for time in np.arange(start_time, end_time, np.timedelta64(granularity, "h")):
         surface_precip_t = surface_precip.interp(time=time.astype("datetime64[ns]"), method="nearest")
         valid = 0.0 <= surface_precip_t
-        surface_precip_r = binned_statistic_2d(
-            lons[valid],
-            lats[valid],
-            surface_precip_t.data[valid],
-            bins=(LON_BINS, LAT_BINS)
-        )[0].T
+        if dlon < 0.25:
+            surface_precip_r = surface_precip_t.interp(latitude=lats_r, longitude=lons_r).data
+        else:
+            surface_precip_r = binned_statistic_2d(
+                lons[valid],
+                lats[valid],
+                surface_precip_t.data[valid],
+                bins=(lon_bins, lat_bins)
+            )[0].T
 
         surface_precip_t = xr.Dataset({
             "latitude": (("latitude",), lats_r),
@@ -104,6 +115,7 @@ def extract_era5_precip(
 @click.argument('month', type=int)
 @click.argument('days', nargs=-1, type=int, required=False)
 @click.argument('output_path', type=click.Path(writable=True))
+@click.option('--domain', type=str, default="merra", help="Name of the domain for which to extract the data.")
 @click.option('--n_processes', default=1, type=int, help="Number of processes to use for downloading data.")
 def extract_precip(
         accumulate: int,
@@ -111,6 +123,7 @@ def extract_precip(
         year: int,
         month: int,
         days: int,
+        domain: str,
         output_path: Path,
         n_processes: int = 1
 ) -> None:
@@ -136,7 +149,7 @@ def extract_precip(
 
     if n_processes > 1:
         LOGGER.info(f"Using {n_processes} processes for data extraction.")
-        tasks = [(year, month, d, accumulate, granularity, output_path) for d in days]
+        tasks = [(year, month, d, domain, accumulate, granularity, output_path) for d in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
@@ -154,7 +167,7 @@ def extract_precip(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_era5_precip(year, month, d, accumulate, granularity, output_path)
+                    extract_era5_precip(year, month, d, domain, accumulate, granularity, output_path)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:

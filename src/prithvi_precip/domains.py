@@ -34,6 +34,45 @@ MERRA = AreaDefinition(
     area_extent=[-180.3125, 90, 179.6978, -90]
 )
 
+CONUS010 = AreaDefinition(
+    area_id="conus0.1",
+    description="Regular lat/lon grid.",
+    proj_id="conus0.1",
+    projection={
+        "proj": "longlat",
+        "datum": "WGS84",
+    },
+    width=590,
+    height=260,
+    area_extent=[-125, 50, -66, 24]
+)
+
+CONUS025 = AreaDefinition(
+    area_id="conus0.25",
+    description="Regular lat/lon grid.",
+    proj_id="conus0.25",
+    projection={
+        "proj": "longlat",
+        "datum": "WGS84",
+    },
+    width=236,
+    height=104,
+    area_extent=[-125, 50, -66, 24]
+)
+
+CONUS050 = AreaDefinition(
+    area_id="conus0.5",
+    description="Regular lat/lon grid.",
+    proj_id="conus0.5",
+    projection={
+        "proj": "longlat",
+        "datum": "WGS84",
+    },
+    width=118,
+    height=57,
+    area_extent=[-125, 50, -66, 24]
+)
+
 
 MEXICO = AreaDefinition(
     area_id="Mexico",

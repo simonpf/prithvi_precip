@@ -24,7 +24,7 @@ from rich.progress import Progress
 from scipy.stats import binned_statistic_2d
 import xarray as xr
 
-from .merra2 import LAT_BINS, LON_BINS
+from ..domains import get_lon_lat_bins
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ def extract_imerg_precip(
         year: int,
         month: int,
         day: int,
+        domain: str,
         accumulate: int,
         granularity: int,
         output_path: Path
@@ -45,6 +46,7 @@ def extract_imerg_precip(
         year: int specifying the year.
         month: int specifying the month
         day: int specifying the day.
+        domain: The domain over which to extract the data.
         granularity: The time interval at which to extract files in hours.
         accumulate: The accumulation period in hours.
         output_path: The path to which to write the extracted files.
@@ -62,6 +64,8 @@ def extract_imerg_precip(
     precip_fields = []
     time = []
 
+    lon_bins, lat_bins = get_lon_lat_bins(domain)
+
     for rec in recs:
         data = l3b_hhr_3imerg_ms_mrg_07b.open(rec).transpose("time", "latitude", "longitude")
         surface_precip = data.surface_precipitation.data
@@ -75,14 +79,14 @@ def extract_imerg_precip(
             lons[valid],
             lats[valid],
             surface_precip[valid],
-            bins=(LON_BINS, LAT_BINS)
+            bins=(lon_bins, lat_bins)
         )[0].T
         precip_fields.append(surface_precip_r)
         time.append(data.time.data[0])
 
     data = xr.Dataset({
-        "latitude": 0.5 * (LAT_BINS[1:] + LAT_BINS[:-1]),
-        "longitude": 0.5 * (LON_BINS[1:] + LON_BINS[:-1]),
+        "latitude": 0.5 * (lat_bins[1:] + lat_bins[:-1]),
+        "longitude": 0.5 * (lon_bins[1:] + lon_bins[:-1]),
         "time": np.stack(time),
         "surface_precip": (("time", "latitude", "longitude"), np.stack(precip_fields))
     })
@@ -112,6 +116,7 @@ def extract_imerg_precip(
 @click.argument('days', nargs=-1, type=int, required=False)
 @click.argument('output_path', type=click.Path(writable=True))
 @click.option('--n_processes', default=1, type=int, help="Number of processes to use for extracting data.")
+@click.option('--domain', default="merra", type=str, help="The domain over which to extract the data.")
 def extract_precip(
         accumulate: int,
         granularity: int,
@@ -138,7 +143,7 @@ def extract_precip(
 
     if n_processes > 1:
         LOGGER.info(f"Using {n_processes} processes for downloading data.")
-        tasks = [(year, month, d, accumulate, granularity, output_path) for d in days]
+        tasks = [(year, month, d, domain, accumulate, granularity, output_path) for d in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
@@ -156,7 +161,7 @@ def extract_precip(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_imerg_precip(year, month, d, accumulate, granularity, output_path)
+                    extract_imerg_precip(year, month, d, domain, accumulate, granularity, output_path)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:

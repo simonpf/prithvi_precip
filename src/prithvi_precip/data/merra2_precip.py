@@ -32,6 +32,7 @@ def extract_merra_precip(
         year: int,
         month: int,
         day: int,
+        domain: str,
         accumulate: int,
         granularity: int,
         output_path: Path
@@ -43,6 +44,7 @@ def extract_merra_precip(
         year: The year
         month: The month
         day: The day
+        domain: Name of the domain over which to extract the data.
         accumulate: The period over which to accumulate results.
         ganularity: The frequency in hours at which to extract samples.
         output_path: A path object pointing to the directory to which to download the data.
@@ -65,8 +67,10 @@ def extract_merra_precip(
     end_time = start_time + np.timedelta64(1, "D")
     time_steps = np.arange(start_time, end_time, np.timedelta64(3, "h"))
 
-
     data = xr.concat(all_data, "time").sortby("time")
+    lons, lats = get_lonlats(domain)
+    data = data.interp(lon=lons[0], lat=lats[..., 0])
+
     if 1 < accumulate:
         time_shifted = data.time[:-(accumulate - 1)]
         data = data.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate - 1, None)}]
@@ -91,6 +95,7 @@ def extract_merra_precip(
 @click.argument('month', type=int)
 @click.argument('days', nargs=-1, type=int, required=False)
 @click.argument('output_path', type=click.Path(writable=True))
+@click.option('--domain', default="merra", type=str, help="Name of the domain over which to extract the data.")
 @click.option('--n_processes', default=1, type=int, help="Number of processes to use for extracting data.")
 def extract_precip(
         accumulate: int,
@@ -98,6 +103,7 @@ def extract_precip(
         year: int,
         month: int,
         days: List[int],
+        domain: str,
         output_path: Path,
         n_processes: int
 ) -> None:
@@ -118,7 +124,7 @@ def extract_precip(
 
     if n_processes > 1:
         LOGGER.info(f"Using {n_processes} processes for downloading data.")
-        tasks = [(year, month, d, accumulate, granularity,  output_path) for d in days]
+        tasks = [(year, month, d, domain, accumulate, granularity,  output_path) for d in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
@@ -136,7 +142,7 @@ def extract_precip(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_merra_precip(year, month, d, accumulate, granularity,  output_path)
+                    extract_merra_precip(year, month, d, domain, accumulate, granularity,  output_path)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:
