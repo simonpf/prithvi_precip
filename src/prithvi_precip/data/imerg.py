@@ -124,6 +124,7 @@ def extract_precip(
         month: int,
         days: List[int],
         output_path: Path,
+        domain: str,
         n_processes: int
 ) -> None:
     """

@@ -20,6 +20,8 @@ from rich.progress import Progress
 import xarray as xr
 
 
+from ..domains import get_lonlats
+
 LOGGER = logging.getLogger(__name__)
 
 

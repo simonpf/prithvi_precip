@@ -5,7 +5,7 @@ prithvi_precip.data.mrms
 Functionality to extract reference precipitation estimates from MRMS measurements.
 """
 from calendar import monthrange
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -19,7 +19,7 @@ from rich.progress import Progress
 from scipy.stats import binned_statistic_2d
 import xarray as xr
 
-from precipfm.definitions import LAT_BINS, LON_BINS
+from ..domains import get_lon_lat_bins
 
 
 LOGGER = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ def extract_mrms_precip(
         year: int,
         month: int,
         day: int,
+        domain: str,
         accumulate: int,
         granularity: int,
         output_path: Path
@@ -40,6 +41,7 @@ def extract_mrms_precip(
         year: int specifying the year.
         month: int specifying the month
         day: int specifying the day.
+        domain: The domain over which to extract the data.
         granularity: The time interval at which to extract files in hours.
         accumulate: The accumulation period in hours.
         output_path: The path to which to write the extracted files.
@@ -55,6 +57,8 @@ def extract_mrms_precip(
 
     precip_fields = []
     time = []
+
+    lon_bins, lat_bins = get_lon_lat_bins(domain)
 
     for rec in recs:
 
@@ -87,27 +91,34 @@ def extract_mrms_precip(
             lons[valid],
             lats[valid],
             surface_precip[valid],
-            bins=(LON_BINS, LAT_BINS)
+            bins=(lon_bins, lat_bins)
         )[0].T
         precip_fields.append(surface_precip_r)
         time.append(data.time.data - np.timedelta64(1, "h"))
 
     data = xr.Dataset({
-        "latitude": 0.5 * (LAT_BINS[1:] + LAT_BINS[:-1]),
-        "longitude": 0.5 * (LON_BINS[1:] + LON_BINS[:-1]),
+        "latitude": 0.5 * (lat_bins[1:] + lat_bins[:-1]),
+        "longitude": 0.5 * (lon_bins[1:] + lon_bins[:-1]),
         "time": np.stack(time),
         "surface_precip": (("time", "latitude", "longitude"), np.stack(precip_fields))
     })
     data = data.sortby("time")
+
+    print(data.time)
 
     if 1 < accumulate:
         time_shifted = data.time[:-(accumulate - 1)]
         data = data.rolling(time=accumulate, center=False).mean()[{"time": slice(accumulate - 1, None)}]
         data = data.assign_coords(time=time_shifted)
 
+
     encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
-    for time_ind in range(data.time.size):
-        data_t = data[{'time': time_ind}]
+
+    start_time = np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00")
+    end_time = start_time + np.timedelta64(1, "D")
+
+    for time in np.arange(start_time, end_time, np.timedelta64(granularity, "h")):
+        data_t = data.interp(time=time.astype("datetime64[ns]"), method="nearest")
         date = to_datetime(data_t["time"].data)
         fname = date.strftime(f"mrms_{accumulate}/%Y/%m/%d/mrms_%Y%m%d%H%M.nc")
         output_file = output_path / fname
@@ -122,6 +133,7 @@ def extract_mrms_precip(
 @click.argument('month', type=int)
 @click.argument('days', nargs=-1, type=int, required=False)
 @click.argument('output_path', type=click.Path(writable=True))
+@click.option('--domain', default="merra", type=str, help="The domain over which to extract the data.")
 @click.option('--n_processes', default=1, type=int, help="Number of processes to use for extracting data.")
 def extract_precip(
         granularity: int,
@@ -129,6 +141,7 @@ def extract_precip(
         year: int,
         month: int,
         days: List[int],
+        domain: str,
         output_path: Path,
         n_processes: int
 ) -> None:
@@ -149,7 +162,7 @@ def extract_precip(
 
     if n_processes > 1:
         LOGGER.info(f"Using {n_processes} processes for downloading data.")
-        tasks = [(year, month, d, granularity, accumulate, output_path) for d in days]
+        tasks = [(year, month, d, domain, granularity, accumulate, output_path) for d in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
@@ -167,7 +180,7 @@ def extract_precip(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_mrms_precip(year, month, d, granularity, accumulate, output_path)
+                    extract_mrms_precip(year, month, d, domain, granularity, accumulate, output_path)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:
