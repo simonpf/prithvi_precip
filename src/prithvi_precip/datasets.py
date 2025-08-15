@@ -1168,7 +1168,8 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             self.obs_loader.copy_files(
                 self.input_times,
                 self.input_time,
-                self.local_data
+                self.local_data,
+                validation=self.validation
             )
             self.obs_loader.observation_path = self.training_data_path / "obs"
 
