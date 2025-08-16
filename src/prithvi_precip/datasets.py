@@ -338,21 +338,22 @@ class MERRAInputData(Dataset):
             climate = transform(torch.stack(climate))
             x["climate"] = climate
 
-        #if self.obs_loader is not None:
-        #    obs = []
-        #    meta = []
-        #    for time_ind, time in enumerate(input_times):
-        #        obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
-        #        obs.append(obs_t)
-        #        meta.append(meta_t)
-        #    obs = torch.stack(obs, 0)
-        #    obs_mask = obs < -2.9
-        #    obs = torch.nan_to_num(obs, nan=-3.0)
-        #    meta = torch.stack(meta, 0)
+        if self.obs_loader is not None:
 
-        #    x["obs"] = obs[None].repeat_interleave(n_steps, 0)
-        #    x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
-        #    x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
+            obs = []
+            meta = []
+            for time_ind, time in enumerate(input_times):
+                obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
+                obs.append(obs_t)
+                meta.append(meta_t)
+            obs = torch.stack(obs, 0)
+            obs_mask = torch.zeros_like(obs) #obs < -2.9
+            obs = torch.nan_to_num(obs, nan=-3.0)
+            meta = torch.stack(meta, 0)
+
+            x["obs"] = obs[None].repeat_interleave(n_steps, 0)
+            x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
+            x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
 
         return x
 
@@ -874,9 +875,9 @@ class ObservationLoader(Dataset):
                 target_path.parent.mkdir(exist_ok=True, parents=True)
                 shutil.copy2(self.observation_path / rel_path, target_path)
 
-        if local_rank == 0 and not validation:
+        if local_rank == 0:
             LOGGER.info(
-                "Copying static files to temporary directory."
+                "Copying stats file to temporary directory."
             )
             stats = obs_local / "stats.nc"
             if not stats.exists():
