@@ -34,6 +34,19 @@ MERRA = AreaDefinition(
     area_extent=[-180.3125, 90, 179.6978, -90]
 )
 
+CONUS005 = AreaDefinition(
+    area_id="conus0.1",
+    description="Regular lat/lon grid.",
+    proj_id="conus0.1",
+    projection={
+        "proj": "longlat",
+        "datum": "WGS84",
+    },
+    width=2 * 590,
+    height=2 * 260,
+    area_extent=[-125, 50, -66, 24]
+)
+
 CONUS010 = AreaDefinition(
     area_id="conus0.1",
     description="Regular lat/lon grid.",

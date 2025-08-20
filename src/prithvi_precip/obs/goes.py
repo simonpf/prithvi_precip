@@ -19,7 +19,7 @@ from filelock import FileLock
 from scipy.constants import speed_of_light
 import numpy as np
 from pansat.file_record import FileRecord
-from pansat.products.satellite.goes import GOES16L1BRadiances
+from pansat.products.satellite.goes import GOES19L1BRadiances
 from pansat.time import to_datetime64, TimeRange
 from rich.progress import Progress
 import xarray as xr
@@ -47,7 +47,7 @@ WAVELENGTHS = {
     16: 13.3,
 }
 
-GOES_PRODUCTS = [GOES16L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS]
+GOES_PRODUCTS = [GOES19L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS]
 
 
 def extract_observations(
@@ -72,8 +72,9 @@ def extract_observations(
     """
     from satpy import Scene
     target_area = getattr(domains, domain.upper())
-    scene = Scene(goes_files)
-    scene.load([f"C{ind:02}" for ind in [2, 7, 9, 14, 15, 16]])
+    print(goes_files)
+    scene = Scene(goes_files, reader="abi_l1b")
+    scene.load([f"C{ind:02}" for ind in [2, 7, 9, 14, 15, 16]], generate=False)
     scene_r = scene.resample(target_area)
     data = scene_r.to_xarray_dataset().compute().rename(x="longitude", y="latitude")
     lons, lats = target_area.get_lonlats()
@@ -188,8 +189,6 @@ def extract_observations_day(
             recs = prod.get(TimeRange(start, end))
             if len(recs) > 0:
                 files.append(recs[0].local_path)
-
-        print(files)
 
         try:
             extract_observations(output_path, files, domain=domain, tile_dims=tile_dims)
