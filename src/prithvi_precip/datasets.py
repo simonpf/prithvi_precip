@@ -338,21 +338,22 @@ class MERRAInputData(Dataset):
             climate = transform(torch.stack(climate))
             x["climate"] = climate
 
-        #if self.obs_loader is not None:
-        #    obs = []
-        #    meta = []
-        #    for time_ind, time in enumerate(input_times):
-        #        obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
-        #        obs.append(obs_t)
-        #        meta.append(meta_t)
-        #    obs = torch.stack(obs, 0)
-        #    obs_mask = obs < -2.9
-        #    obs = torch.nan_to_num(obs, nan=-3.0)
-        #    meta = torch.stack(meta, 0)
+        if self.obs_loader is not None:
 
-        #    x["obs"] = obs[None].repeat_interleave(n_steps, 0)
-        #    x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
-        #    x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
+            obs = []
+            meta = []
+            for time_ind, time in enumerate(input_times):
+                obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
+                obs.append(obs_t)
+                meta.append(meta_t)
+            obs = torch.stack(obs, 0)
+            obs_mask = torch.zeros_like(obs) #obs < -2.9
+            obs = torch.nan_to_num(obs, nan=-3.0)
+            meta = torch.stack(meta, 0)
+
+            x["obs"] = obs[None].repeat_interleave(n_steps, 0)
+            x["obs_mask"] = obs_mask[None].repeat_interleave(n_steps, 0)
+            x["obs_meta"] = meta[None].repeat_interleave(n_steps, 0)
 
         return x
 
@@ -728,6 +729,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
             with xr.load_dataset(self.training_data_path / output_file) as data:
                 LOGGER.debug("Loading precip data from %s.", output_file)
                 precip = torch.tensor(data.surface_precip.data.astype(np.float32))
+                if self.reference_data.startswith("era5"):
+                    precip = 1e3 * precip
 
             coords = x["static"][:2]
 
@@ -872,9 +875,9 @@ class ObservationLoader(Dataset):
                 target_path.parent.mkdir(exist_ok=True, parents=True)
                 shutil.copy2(self.observation_path / rel_path, target_path)
 
-        if local_rank == 0 and not validation:
+        if local_rank == 0:
             LOGGER.info(
-                "Copying static files to temporary directory."
+                "Copying stats file to temporary directory."
             )
             stats = obs_local / "stats.nc"
             if not stats.exists():
@@ -1166,7 +1169,8 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             self.obs_loader.copy_files(
                 self.input_times,
                 self.input_time,
-                self.local_data
+                self.local_data,
+                validation=self.validation
             )
             self.obs_loader.observation_path = self.training_data_path / "obs"
 
@@ -1320,7 +1324,10 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                     output_file = self.output_files[output_indices[output_ind]]
                     with xr.load_dataset(self.training_data_path / output_file) as data:
                         LOGGER.debug("Loading precip data from %s.", output_file)
-                        precip.append(torch.tensor(data.surface_precip.data.astype(np.float32)))
+                        precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+                        if self.reference_data.startswith("era5"):
+                            precip_s = 1e3 * precip_s
+                        precip.append(precip_s)
                 else:
                     precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
