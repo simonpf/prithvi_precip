@@ -56,6 +56,7 @@ def extract_mrms_precip(
     recs += mrms.precip_1h_gc.get(time_range)
 
     precip_fields = []
+    rqi_fields = []
     time = []
 
     lon_bins, lat_bins = get_lon_lat_bins(domain)
@@ -81,6 +82,11 @@ def extract_mrms_precip(
             if mask is not None:
                 surface_precip[~mask] = np.nan
 
+        rqi_recs = mrms.radar_quality_index.get(rec.central_time)
+        if len(rqi_recs) == 0:
+            continue
+        rqi = rqi_recs[0].open()
+
         lons = data.longitude.data
         lats = data.latitude.data
         lons, lats = np.meshgrid(lons, lats, indexing="xy")
@@ -93,18 +99,25 @@ def extract_mrms_precip(
             surface_precip[valid],
             bins=(lon_bins, lat_bins)
         )[0].T
+        rqi_r = binned_statistic_2d(
+            lons[valid],
+            lats[valid],
+            rqi.radar_quality_index.data[valid],
+            bins=(lon_bins, lat_bins)
+        )[0].T
+
         precip_fields.append(surface_precip_r)
+        rqi_fields.append(rqi_r)
         time.append(data.time.data - np.timedelta64(1, "h"))
 
     data = xr.Dataset({
         "latitude": 0.5 * (lat_bins[1:] + lat_bins[:-1]),
         "longitude": 0.5 * (lon_bins[1:] + lon_bins[:-1]),
         "time": np.stack(time),
-        "surface_precip": (("time", "latitude", "longitude"), np.stack(precip_fields))
+        "surface_precip": (("time", "latitude", "longitude"), np.stack(precip_fields)),
+        "radar_quality_index": (("time", "latitude", "longitude"), np.stack(rqi_fields))
     })
     data = data.sortby("time")
-
-    print(data.time)
 
     if 1 < accumulate:
         time_shifted = data.time[:-(accumulate - 1)]
