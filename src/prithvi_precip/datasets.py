@@ -17,7 +17,11 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from filelock import FileLock
 import numpy as np
-from prithvi_precip.utils import load_static_input, load_climatology
+from PrithviWxC.dataloaders.merra2 import (
+    input_scalers,
+    output_scalers,
+    static_input_scalers,
+)
 import torch
 from torch import nn
 from torch.utils.data import Dataset
@@ -28,7 +32,9 @@ from prithvi_precip.data.merra2 import (
     SURFACE_VARS,
     VERTICAL_VARS,
     STATIC_SURFACE_VARS,
+    LEVELS
 )
+from prithvi_precip.utils import load_static_input, load_climatology
 from .utils import to_datetime, to_datetime64
 
 
@@ -1216,6 +1222,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
     def __init__(
             self,
             training_data_path: Union[Path, str],
+            scaling_factors: Union[Path, str],
             input_time: int = 3,
             accumulation_period: int = 3,
             max_steps: int = 24,
@@ -1230,6 +1237,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         """
         Args:
             training_data_path: The directory containing the dynamic input data.
+            scaling_factors: Directory containing the scaling factors for the Prithvi-WxC model.
             input_time: The time difference between input samples.
             accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
@@ -1256,6 +1264,18 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             local_data=local_data,
             weighted_sampling=weighted_sampling
         )
+        scaling_factors = Path(scaling_factors)
+        if not scaling_factors.exists():
+            raise ValueError(
+                "scaling_factors must point to an existing directory and contain the PrithviWxC scaling factors."
+            )
+        self.output_sig = output_scalers(
+            SURFACE_VARS,
+            VERTICAL_VARS,
+            LEVELS,
+            str(scaling_factors / "anomaly_variance_surface.nc"),
+            str(scaling_factors / "anomaly_variance_vertical.nc"),
+        )[..., None, None]
 
     def __len__(self):
         return trunc(len(self.input_indices) * self.sampling_rate)
@@ -1302,6 +1322,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
             precip = []
             climates = []
+            ys = []
 
             available_times = [
                 self.output_times[out_ind] for out_ind in self.output_indices[sample_ind]
@@ -1332,10 +1353,22 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                     precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
 
+                if output_time in self.input_times:
+                    ind = np.searchsorted(self.input_times, output_time)
+                    y = self.load_dynamic_data(self.input_files[ind])
+                    if self.climate:
+                        y = (y - climates[-1])
+                    y = y / self.output_sig
+                    ys.append(transform(y))
+
             if 0 < len(climates):
                 x["climate"] = transform(torch.stack(climates, 0))
 
-            return x, precip
+            targets = {
+                "surface_precip": precip,
+                "y": ys
+            }
+            return x, targets
 
         except Exception as exc:
             raise exc
