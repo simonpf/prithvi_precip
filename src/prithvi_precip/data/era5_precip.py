@@ -58,7 +58,7 @@ def extract_era5_precip(
         file_path = era5_path / f"{time.year}{time.month:02}" / f"ERA5_{time.year}{time.month:02}{time.day:02}_surf.nc"
         with xr.open_dataset(file_path) as data:
             surface_precip.append(data["tp"].compute())
-    surface_precip = xr.concat(surface_precip, dim="time")
+    surface_precip = xr.concat(surface_precip, dim="time").sortby("time")
 
     if 1 < accumulate:
         time_shifted = surface_precip.time[:-(accumulate - 1)]
@@ -85,9 +85,12 @@ def extract_era5_precip(
     for time in np.arange(start_time, end_time, np.timedelta64(granularity, "h")):
         surface_precip_t = surface_precip.interp(time=time.astype("datetime64[ns]"), method="nearest")
         valid = 0.0 <= surface_precip_t
-        if dlon < 0.25:
+        if dlon < 0.3:
             surface_precip_r = surface_precip_t.interp(latitude=lats_r, longitude=lons_r).data
         else:
+            lons = surface_precip_t.longitude.data
+            lats = surface_precip_t.latitude.data
+            lons, lats = np.meshgrid(lons, lats)
             surface_precip_r = binned_statistic_2d(
                 lons[valid],
                 lats[valid],
