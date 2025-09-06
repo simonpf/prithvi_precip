@@ -551,6 +551,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             training_local
         )
         input_files = []
+        input_times = []
         for inds in local_input_indices:
             input_files += list(self.input_files[inds])
         input_files = set(input_files)
@@ -595,6 +596,26 @@ class DirectPrecipForecastDataset(MERRAInputData):
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
+
+        # Filter input and output times to ensure all processes have the same number of samples.
+        input_times_new = []
+        input_files_new = []
+        for input_time, input_file in zip(self.input_times, self.input_files):
+            if input_file in input_files:
+                input_times_new.append(input_time)
+                input_files_new.append(input_file)
+        self.input_times = input_times_new
+        self.input_files = input_files_new
+
+        output_times_new = []
+        output_files_new = []
+        for output_time, output_file in zip(self.output_times, self.output_files):
+            if output_file in output_files:
+                output_times_new.append(output_time)
+                output_files_new.append(output_file)
+        self.output_times = output_times_new
+        self.output_files = output_files_new
+
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         assert len(self.input_indices) == n_samples_local
 
