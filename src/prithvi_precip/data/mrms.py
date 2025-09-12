@@ -114,19 +114,11 @@ def extract_mrms_precip(
 
     encoding = {"surface_precip": {"dtype": np.float32, "zlib": True}}
 
-<<<<<<< Updated upstream
     start_time = np.datetime64(f"{year}-{month:02}-{day:02}T00:00:00")
     end_time = start_time + np.timedelta64(1, "D")
 
     for time in np.arange(start_time, end_time, np.timedelta64(granularity, "h")):
         data_t = data.interp(time=time.astype("datetime64[ns]"), method="nearest")
-=======
-    start_time = datetime(year, month, day, minute=0)
-    end_time = start_time + timedelta(days=1)
-
-    for time in np.arange(start_time, end_time, np.timedelta64(granularity, "h")):
-        data_t = data.interp(time=time, method="nearest")
->>>>>>> Stashed changes
         date = to_datetime(data_t["time"].data)
         fname = date.strftime(f"mrms_{accumulate}/%Y/%m/%d/mrms_%Y%m%d%H%M.nc")
         output_file = output_path / fname
