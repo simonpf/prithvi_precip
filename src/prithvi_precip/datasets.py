@@ -2,7 +2,7 @@
 prithvi_precip.datasets
 =======================
 
-Provides datasets to load training data for the Prithvi-WxC model.
+Provides datasets to load training data for the Prithvi Precip model.
 """
 from datetime import datetime
 from functools import cache, cached_property, partial
@@ -41,33 +41,6 @@ from .utils import to_datetime, to_datetime64
 LOGGER = logging.getLogger(__name__)
 
 
-def get_position_signal(lons: np.ndarray, lats:np.ndarray, kind: str) -> np.ndarray:
-    """
-    Calculate the position encoding.
-
-    Args:
-        lons: An array containing the longitude coordinates.
-        lats: An array containing the latitude coordiantes.
-        kind: A string defining the kind of the encoding. Currely supported are:
-            - 'absolute': Returns the sine of the latitude coordinates and the cosine and sine
-               of the longitude coordaintes stacked along the first dimensions
-            - anything else: Simply returns the latitudes and longitudes in degree stacked along
-              the first dimenion.
-    """
-    lons = lons.astype(np.float32)
-    lats = lats.astype(np.float32)
-    lons ,lats = np.meshgrid(lons, lats, indexing="xy")
-    if kind == "absolute":
-        lats_rad = np.deg2rad(lats_rad)
-        lons_rad = np.deg2rad(lons_rad)
-        static = np.stack([
-            np.sin(lats_rad),
-            np.cos(lons_rad),
-            np.sin(lons_rad)
-        ])
-    return np.stack([lats, lons], axis=0).astype(np.float32)
-
-
 class MERRAInputData(Dataset):
     """
     A PyTorch Dataset for loading 3-hourly MERRA2 data organized as input for the Prithvi-WxC FM.
@@ -78,7 +51,6 @@ class MERRAInputData(Dataset):
             input_time: int = 3,
             lead_times: Optional[List[int]] = None,
             climatology: bool = True,
-            observation_layers: Optional[int] = None,
             center_meridionally: bool = True
     ):
 
@@ -86,9 +58,8 @@ class MERRAInputData(Dataset):
         Args:
             training_data_path (str): Path pointing to the directory containing the dynamic MERRA2
                 input data in year/month/day folders.
-            input_time: The input time.
+            input_time: The time step in hours between the two input steps.
             climatology: Whether or not to include climatology data in the input.
-            observation_layers:
             center_meridionally: Whether to center input grids meridionally instad of removing the last row
                  (which is the default for the original Prithvi-WxC)
         """
