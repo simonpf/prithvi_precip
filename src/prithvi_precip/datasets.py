@@ -2,7 +2,7 @@
 prithvi_precip.datasets
 =======================
 
-Provides datasets to load training data for the Prithvi-WxC model.
+Provides datasets to load training data for the Prithvi Precip model.
 """
 from datetime import datetime
 from functools import cache, cached_property, partial
@@ -41,33 +41,6 @@ from .utils import to_datetime, to_datetime64
 LOGGER = logging.getLogger(__name__)
 
 
-def get_position_signal(lons: np.ndarray, lats:np.ndarray, kind: str) -> np.ndarray:
-    """
-    Calculate the position encoding.
-
-    Args:
-        lons: An array containing the longitude coordinates.
-        lats: An array containing the latitude coordiantes.
-        kind: A string defining the kind of the encoding. Currely supported are:
-            - 'absolute': Returns the sine of the latitude coordinates and the cosine and sine
-               of the longitude coordaintes stacked along the first dimensions
-            - anything else: Simply returns the latitudes and longitudes in degree stacked along
-              the first dimenion.
-    """
-    lons = lons.astype(np.float32)
-    lats = lats.astype(np.float32)
-    lons ,lats = np.meshgrid(lons, lats, indexing="xy")
-    if kind == "absolute":
-        lats_rad = np.deg2rad(lats_rad)
-        lons_rad = np.deg2rad(lons_rad)
-        static = np.stack([
-            np.sin(lats_rad),
-            np.cos(lons_rad),
-            np.sin(lons_rad)
-        ])
-    return np.stack([lats, lons], axis=0).astype(np.float32)
-
-
 class MERRAInputData(Dataset):
     """
     A PyTorch Dataset for loading 3-hourly MERRA2 data organized as input for the Prithvi-WxC FM.
@@ -78,7 +51,6 @@ class MERRAInputData(Dataset):
             input_time: int = 3,
             lead_times: Optional[List[int]] = None,
             climatology: bool = True,
-            observation_layers: Optional[int] = None,
             center_meridionally: bool = True
     ):
 
@@ -86,9 +58,8 @@ class MERRAInputData(Dataset):
         Args:
             training_data_path (str): Path pointing to the directory containing the dynamic MERRA2
                 input data in year/month/day folders.
-            input_time: The input time.
+            input_time: The time step in hours between the two input steps.
             climatology: Whether or not to include climatology data in the input.
-            observation_layers:
             center_meridionally: Whether to center input grids meridionally instad of removing the last row
                  (which is the default for the original Prithvi-WxC)
         """
@@ -551,6 +522,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             training_local
         )
         input_files = []
+        input_times = []
         for inds in local_input_indices:
             input_files += list(self.input_files[inds])
         input_files = set(input_files)
@@ -595,6 +567,26 @@ class DirectPrecipForecastDataset(MERRAInputData):
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
+
+        # Filter input and output times to ensure all processes have the same number of samples.
+        input_times_new = []
+        input_files_new = []
+        for input_time, input_file in zip(self.input_times, self.input_files):
+            if input_file in input_files:
+                input_times_new.append(input_time)
+                input_files_new.append(input_file)
+        self.input_times = input_times_new
+        self.input_files = input_files_new
+
+        output_times_new = []
+        output_files_new = []
+        for output_time, output_file in zip(self.output_times, self.output_files):
+            if output_file in output_files:
+                output_times_new.append(output_time)
+                output_files_new.append(output_file)
+        self.output_times = output_times_new
+        self.output_files = output_files_new
+
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         assert len(self.input_indices) == n_samples_local
 
@@ -1275,7 +1267,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             LEVELS,
             str(scaling_factors / "anomaly_variance_surface.nc"),
             str(scaling_factors / "anomaly_variance_vertical.nc"),
-        )[..., None, None]
+        )[..., None, None] ** 0.5
 
     def __len__(self):
         return trunc(len(self.input_indices) * self.sampling_rate)
@@ -1296,6 +1288,8 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             input_times = [self.input_times[ind_in] for ind_in in self.input_indices[sample_ind]]
             dynamic_in = [self.load_dynamic_data(path) for path in input_files]
 
+            print(input_files)
+
             static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.input_time, "h")
             static_in = [
                 torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
@@ -1303,16 +1297,15 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
             input_time = self.input_time
 
-            # Remove one row along lat dimension.
-            pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
-
             if self.center_meridionally:
                 transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+                transform_3d = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             else:
-                transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
+                transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
+                transform_3d = partial(nn.functional.pad, pad=(0, 0, 0, -1, 0, 0), mode="constant", value=0)
 
             x = {
-                "x": transform(torch.stack(dynamic_in, 0)),
+                "x": transform_3d(torch.stack(dynamic_in, 0)),
                 "static": transform(torch.stack(static_in, 0)),
                 "input_time": torch.tensor(input_time).to(dtype=torch.float32),
                 "lead_time": torch.tensor(input_time).to(dtype=torch.float32),
