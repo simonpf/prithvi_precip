@@ -51,13 +51,15 @@ def merra_coordinates(merra_dimensions):
 @pytest.fixture
 def mock_merra_dynamic_data(merra_coordinates, merra_dimensions):
     """Create mock MERRA2 dynamic data file."""
+
     def create_file(timestamp: datetime, output_path: Path):
         data_vars = {}
+
         
         # Surface variables
         for var in SURFACE_VARS:
             data_vars[var] = xr.DataArray(
-                np.random.randn(
+                timestamp.hour * np.ones((
                     merra_dimensions['latitude'], 
                     merra_dimensions['longitude']
                 ).astype(np.float32),
@@ -71,9 +73,8 @@ def mock_merra_dynamic_data(merra_coordinates, merra_dimensions):
         # Vertical variables
         for var in VERTICAL_VARS:
             data_vars[var] = xr.DataArray(
-                np.random.randn(
-                    merra_dimensions['levels'],
-                    merra_dimensions['latitude'], 
+                timestamp.hour * np.ones((
+                    merra_dimensions['latitude'],
                     merra_dimensions['longitude']
                 ).astype(np.float32),
                 dims=['lev', 'latitude', 'longitude'],
@@ -282,14 +283,11 @@ def merra_dataset_structure(temp_data_dir, mock_merra_dynamic_data,
             mock_precipitation_data(timestamp, precip_file)
             era5_precip_files.append(str(precip_file.relative_to(temp_data_dir)))
             mock_climatology_data(timestamp, clim_dir)
-        
+
         # Static files
         static_file = static_dir / "static.nc"
         mock_merra_static_data(static_file)
         
-        # Climatology file
-        clim_file = clim_dir / "climatology.nc"
-
         return {
             'base_path': temp_data_dir,
             'timestamps': timestamps,
