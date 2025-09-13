@@ -109,9 +109,9 @@ BRAZIL = AreaDefinition(
         "proj": "longlat",
         "datum": "WGS84",
     },
-    width=256,
-    height=256,
-    area_extent=[-120, -30.6, -94.4, 5]
+    width=384,
+    height=384,
+    area_extent=[-72, -34, -33.6, 4.4]
 )
 
 def get_lonlats(domain: str) -> Tuple[np.ndarray, np.ndarray]:
