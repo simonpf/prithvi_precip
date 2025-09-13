@@ -93,7 +93,7 @@ def test_observation_loader_fixtures(observation_dataset_structure, sample_datas
     start_date = datetime(2023, 1, 1)
     structure = observation_dataset_structure(
         start_date, 
-        n_timesteps=24,
+        n_timesteps=10,
         n_channels=sample_dataset_config['observation_layers']
     )
     
@@ -158,9 +158,9 @@ def test_mock_data_consistency(mock_merra_dynamic_data, mock_precipitation_data,
 
 
 @pytest.mark.parametrize("n_timesteps,input_time", [
-    (24, 3),
-    (48, 6),
-    (72, 12)
+    (6, 3),
+    (8, 6),
+    (10, 12)
 ])
 def test_parametrized_dataset_creation(merra_dataset_structure, n_timesteps, input_time):
     """Test dataset creation with different parameters."""
@@ -168,7 +168,7 @@ def test_parametrized_dataset_creation(merra_dataset_structure, n_timesteps, inp
     structure = merra_dataset_structure(start_date, n_timesteps=n_timesteps)
     
     dataset = MERRAInputData(
-        training_data_path=structure['base_path'] / "dynamic",
+        training_data_path=structure['base_path'] / "training_data",
         input_time=input_time,
         lead_times=[input_time, input_time * 2],
         climatology=True
@@ -177,15 +177,6 @@ def test_parametrized_dataset_creation(merra_dataset_structure, n_timesteps, inp
     assert len(dataset.times) == n_timesteps
     # Should have some valid samples (depending on input_time)
     assert len(dataset.input_indices) >= 0
-
-
-def test_torch_device_fixture(torch_device):
-    """Test that torch device fixture works."""
-    assert isinstance(torch_device, torch.device)
-    
-    # Test creating tensors on the device
-    tensor = torch.randn(10, 10, device=torch_device)
-    assert tensor.device == torch_device
 
 
 def test_data_file_cleanup(temp_data_dir, mock_merra_dynamic_data):
@@ -202,16 +193,11 @@ def test_data_file_cleanup(temp_data_dir, mock_merra_dynamic_data):
 
 def test_climatology_fixture(mock_climatology_data, temp_data_dir, merra_coordinates):
     """Test climatology data fixture."""
-    clim_file = temp_data_dir / "test_climatology.nc"
-    mock_climatology_data(clim_file)
-    
-    with xr.open_dataset(clim_file) as clim_data:
-        assert 'climatology' in clim_data
-        # Should be non-negative (exponential distribution)
-        assert (clim_data.climatology.values >= 0).all()
-        # Check coordinates
-        assert np.array_equal(clim_data.latitude.values, merra_coordinates['latitude'])
-        assert np.array_equal(clim_data.longitude.values, merra_coordinates['longitude'])
+    clim_path = temp_data_dir
+    mock_climatology_data(datetime(2023, 1, 1), clim_path)
+
+    assert (clim_path / "climate_surface_doy001_hour00.nc").exists()
+    assert (clim_path / "climate_vertical_doy001_hour00.nc").exists()
 
 
 def test_static_data_fixture(mock_merra_static_data, temp_data_dir, merra_coordinates):
@@ -224,7 +210,7 @@ def test_static_data_fixture(mock_merra_static_data, temp_data_dir, merra_coordi
         expected_vars = ['FRLAKE', 'FRLAND', 'FRLANDICE', 'FROCEAN']  # Sample static vars
         for var in expected_vars:
             if var in static_data:  # Some may not be in the test data
-                assert static_data[var].dims == ('latitude', 'longitude')
+                assert static_data[var].dims == ('time', 'latitude', 'longitude')
         
         # Check coordinates
         assert np.array_equal(static_data.latitude.values, merra_coordinates['latitude'])

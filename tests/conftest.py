@@ -19,7 +19,7 @@ from prithvi_precip.data.merra2 import (
 )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def temp_data_dir():
     """Create a temporary directory for test data."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -187,26 +187,46 @@ def mock_observation_data(merra_coordinates, merra_dimensions):
 @pytest.fixture
 def mock_climatology_data(merra_coordinates, merra_dimensions):
     """Create mock climatology data."""
-    def create_file(output_path: Path):
-        clim_data = np.random.exponential(
-            0.3, size=(
-                merra_dimensions['latitude'], 
-                merra_dimensions['longitude']
-            )
-        ).astype(np.float32)
-        
-        dataset = xr.Dataset({
-            'climatology': xr.DataArray(
-                clim_data,
+    def create_file(timestamp: datetime, output_path: Path):
+
+        data_vars = {}
+        # Surface variables
+        for var in SURFACE_VARS:
+            data_vars[var] = xr.DataArray(
+                np.random.randn(
+                    merra_dimensions['latitude'],
+                    merra_dimensions['longitude']
+                ).astype(np.float32),
                 dims=['latitude', 'longitude'],
                 coords={
                     'latitude': merra_coordinates['latitude'],
                     'longitude': merra_coordinates['longitude']
                 }
             )
-        })
-        
-        dataset.to_netcdf(output_path)
+        dataset = xr.Dataset(data_vars)
+        fname = timestamp.strftime(f"climate_surface_doy%j_hour%H.nc")
+        dataset.to_netcdf(output_path / fname)
+
+        data_vars = {}
+        # Vertical variables
+        for var in VERTICAL_VARS:
+            data_vars[var] = xr.DataArray(
+                np.random.randn(
+                    merra_dimensions['levels'],
+                    merra_dimensions['latitude'],
+                    merra_dimensions['longitude']
+                ).astype(np.float32),
+                dims=['lev', 'latitude', 'longitude'],
+                coords={
+                    'lev': merra_coordinates['lev'],
+                    'latitude': merra_coordinates['latitude'],
+                    'longitude': merra_coordinates['longitude']
+                }
+            )
+
+        dataset = xr.Dataset(data_vars)
+        fname = timestamp.strftime(f"climate_vertical_doy%j_hour%H.nc")
+        dataset.to_netcdf(output_path / fname)
         return output_path
     
     return create_file
@@ -261,6 +281,7 @@ def merra_dataset_structure(temp_data_dir, mock_merra_dynamic_data,
                           f"era5_precip_{timestamp.strftime('%Y%m%d%H%M%S')}.nc")
             mock_precipitation_data(timestamp, precip_file)
             era5_precip_files.append(str(precip_file.relative_to(temp_data_dir)))
+            mock_climatology_data(timestamp, clim_dir)
         
         # Static files
         static_file = static_dir / "static.nc"
@@ -268,8 +289,7 @@ def merra_dataset_structure(temp_data_dir, mock_merra_dynamic_data,
         
         # Climatology file
         clim_file = clim_dir / "climatology.nc"
-        mock_climatology_data(clim_file)
-        
+
         return {
             'base_path': temp_data_dir,
             'timestamps': timestamps,
