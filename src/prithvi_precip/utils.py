@@ -9,7 +9,7 @@ from datetime import datetime
 from functools import cache
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -270,3 +270,33 @@ def load_dynamic_input(path: Path, slcs: Optional[Dict[str, slice]] = None) -> t
             all_data.append(data[var].__getitem__(slcs).astype(np.float32))
     all_data = torch.tensor(np.concatenate(all_data, axis=0))
     return all_data
+
+
+def find_input_files(training_data_path: Path, source: str = "merra2") -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Gather all available MERRA2 files paths and extract available times.
+
+        Args:
+            training_data_path: Path object pointing to the directory containing the training data.
+            source: The name of the input dataset ('merra2' or 'geos')
+
+        Return:
+            A tuple containing arrays of available inputs times and corresponding file
+            paths.
+        """
+        times = []
+        files = []
+
+        for path in sorted(list(training_data_path.glob(f"dynamic/**/{source}_*.nc"))):
+            try:
+                date = datetime.strptime(path.name, f"{source}_%Y%m%d%H%M%S.nc")
+                date64 = to_datetime64(date)
+
+                files.append(str(path.relative_to(training_data_path)))
+                times.append(date64)
+            except ValueError:
+                continue
+
+        times = np.array(times)
+        files = np.array(files)
+        return times, files

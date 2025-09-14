@@ -23,8 +23,8 @@ from PrithviWxC.dataloaders.merra2 import output_scalers
 
 from .merra2 import MERRAInputData
 from ..data.merra2 import SURFACE_VARS, VERTICAL_VARS, LEVELS
-from .utils import find_input_files
 from ..utils import (
+    find_input_files,
     load_climatology,
     load_dynamic_input,
     load_static_input,
