@@ -37,8 +37,12 @@ def post_process_results(inpt: Dict[str, torch.Tensor], results: Dict[str, torch
     })
 
     for key, tnsr in results.items():
-        res = tnsr.expected_value().float().cpu().numpy()[:, 0]
-        dataset[key] = (("batch", "latitude", "longitude"), res)
+        if isinstance(tnsr, list):
+            res = [tensor.expected_value().float().cpu().numpy()[:, 0] for tensor in tnsr]
+            dataset[key] = (("batch", "step", "latitude", "longitude"), np.stack(res, axis=1))
+        else:
+            res = tnsr.expected_value().float().cpu().numpy()[:, 0]
+            dataset[key] = (("batch", "latitude", "longitude"), res)
         dataset[key].encoding = {"dtype": np.float32, "zlib": True}
 
     return dataset
@@ -81,7 +85,7 @@ def run_direct_forecast(
             res["valid_time"] = (("valid_time",), valid_times)
 
         date = init_time.astype("datetime64[s]").item()
-        fname = date.strftime("forecast_%Y%m%d%H%M%S.nc")
+        fname = date.strftime("forecast_%Y%m%d%H%M.nc")
         output_file = output_path / fname
         if output_file.exists():
             existing = xr.load_dataset(output_file)
@@ -122,12 +126,7 @@ def run_autoregressive_forecast(
         }
 
         with torch.no_grad():
-            pred_all = model(batch)
-            if not isinstance(pred_all, list):
-                raise ValueError(
-                    "Autoregressive forecast expects a list of results to be returned."
-                )
-            res = xr.concat([post_process_fn(batch, pred) for pred in pred_all], dim="valid_time")
+            res = post_process_fn(batch, model(batch)).rename(step="valid_time")
             res["valid_time"] = (("batch", "valid_time"), valid_times)
             res["initialization_time"] = (("batch",), init_times)
 
@@ -136,6 +135,6 @@ def run_autoregressive_forecast(
             init_time = res_b.initialization_time.data
             date = init_time.astype("datetime64[s]").item()
 
-            fname = date.strftime("forecast_%Y%m%d%H%M%S.nc")
+            fname = date.strftime("forecast_%Y%m%d%H%M.nc")
             output_file = output_path / fname
             res_b.to_netcdf(output_file)

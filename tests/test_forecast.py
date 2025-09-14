@@ -74,6 +74,9 @@ def test_direct_forecast_loader(imerg_training_data_1):
     assert torch.isclose(input_data["climate"][1, :20], torch.tensor(1.0)).all()
     assert torch.isclose(input_data["climate"][1, 20:], torch.tensor(9.0)).all()
 
+    assert (torch.isclose(input_data["lead_time"], torch.tensor([3.0, 6.0]))).all()
+    assert (torch.isclose(input_data["input_time"], torch.tensor(3.0))).all()
+
 
 def test_autoregressive_forecast_loader(imerg_training_data_1):
     """
@@ -103,6 +106,8 @@ def test_autoregressive_forecast_loader(imerg_training_data_1):
     valid_times_ref = init_times_ref[:, None] + np.arange(1, 5) * np.timedelta64(3, "h")
     assert (valid_times == valid_times_ref).all()
 
+    assert (torch.isclose(input_data["lead_time"], torch.tensor(3.0))).all()
+    assert (torch.isclose(input_data["input_time"], torch.tensor(3.0))).all()
 
     # Static data should be duplicated across batch.
     for step in range(4):
@@ -183,7 +188,7 @@ def test_run_direct_forecast(imerg_training_data_1, tmp_path):
     result_files = sorted(list(tmp_path.glob("*.nc")))
 
     assert len(result_files) == 2
-    assert result_files[0].name == "forecast_20200101030000.nc"
+    assert result_files[0].name == "forecast_202001010300.nc"
 
     res = xr.load_dataset(result_files[0])
     valid_times_ref = np.arange(
@@ -211,7 +216,7 @@ class AutoregressiveModel(nn.Module):
     def forward(self, inpt: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """ Returns a single scalar field as the forecast. """
         n_steps = inpt["static"].shape[1]
-        return [{"surface_precip": MeanTensor(inpt["x"][:, 0, :1])} for _ in range(n_steps)]
+        return {"surface_precip": [MeanTensor(inpt["x"][:, 0, :1]) for _ in range(n_steps)]}
 
 
 def test_run_autoregressive_forecast(imerg_training_data_1, tmp_path):
@@ -245,7 +250,7 @@ def test_run_autoregressive_forecast(imerg_training_data_1, tmp_path):
     result_files = sorted(list(tmp_path.glob("*.nc")))
 
     assert len(result_files) == 2
-    assert result_files[0].name == "forecast_20200101030000.nc"
+    assert result_files[0].name == "forecast_202001010300.nc"
 
     res = xr.load_dataset(result_files[0])
     valid_times_ref = np.arange(

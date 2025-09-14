@@ -427,7 +427,8 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
-            weighted_sampling: bool = False
+            weighted_sampling: bool = False,
+            source: str = "merra2"
     ):
         """
         Args:
@@ -457,7 +458,8 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             center_meridionally=center_meridionally,
             validation=validation,
             local_data=local_data,
-            weighted_sampling=weighted_sampling
+            weighted_sampling=weighted_sampling,
+            source=source
         )
         scaling_factors = Path(scaling_factors)
         if not scaling_factors.exists():
@@ -501,13 +503,11 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
             if self.center_meridionally:
                 transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
-                transform_3d = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             else:
                 transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
-                transform_3d = partial(nn.functional.pad, pad=(0, 0, 0, -1, 0, 0), mode="constant", value=0)
 
             x = {
-                "x": transform_3d(torch.stack(dynamic_in, 0)),
+                "x": transform(torch.stack(dynamic_in, 0)),
                 "static": transform(torch.stack(static_in, 0)),
                 "input_time": torch.tensor(input_time).to(dtype=torch.float32),
                 "lead_time": torch.tensor(input_time).to(dtype=torch.float32),
@@ -526,6 +526,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             output_indices = [
                 out_ind for out_ind in self.output_indices[sample_ind] if 0 <= out_ind
             ]
+
             output_time = input_times[-1]
 
             for step in range(1, self.max_steps + 1):
@@ -555,6 +556,8 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                         y = (y - climates[-1])
                     y = y / self.output_sig
                     ys.append(transform(y))
+                else:
+                    ys.append(torch.nan * torch.zeros_like(climates[-1]))
 
             if 0 < len(climates):
                 x["climate"] = transform(torch.stack(climates, 0))

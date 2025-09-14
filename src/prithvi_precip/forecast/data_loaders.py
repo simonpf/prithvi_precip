@@ -5,12 +5,14 @@ prithvi_precip.forecast
 Functionality for running forecasts with the Prithvi Precip model.
 """
 from datetime import datetime
+from functools import partial
 from math import ceil
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
+from torch import nn
 import xarray as xr
 
 from ..utils import (
@@ -198,9 +200,8 @@ class AutoregressiveForecastLoader:
         """
         input_indices = self.input_indices[input_index]
         init_time = self.input_times[input_indices[-1]]
-        input_times = [init_time - np.timedelta64(step * self.input_time) for step in [-1, 0]]
 
-        input_time = torch.tensor((input_times[-1] - input_times[0]).astype("timedelta64[h]").astype(np.float32))
+        input_time = torch.tensor(self.input_time).to(dtype=torch.float32)
         input_time = torch.repeat_interleave(input_time[None], self.n_steps, 0)
         lead_time = input_time
 
@@ -221,11 +222,12 @@ class AutoregressiveForecastLoader:
             transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             transform_3d = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
         else:
-            transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
+            print("TRANSA")
+            transform = partial(nn.functional.pad, pad=(0, 0, 0, -1))
             transform_3d = partial(nn.functional.pad, pad=(0, 0, 0, -1, 0, 0), mode="constant", value=0)
 
         inpt = {
-            "x": transform_3d(torch.stack(dynamic)),
+            "x": transform(torch.stack(dynamic)),
             "static": transform(torch.stack(static)),
             "climate": transform_3d(torch.stack(climate)),
             "input_time": input_time,
