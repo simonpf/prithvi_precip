@@ -89,7 +89,7 @@ def mock_merra_dynamic_data(merra_coordinates, merra_dimensions):
             )
         
         dataset = xr.Dataset(data_vars)
-        dataset.to_netcdf(output_path)
+        dataset.to_netcdf(output_path, engine='h5netcdf')
         return output_path
     
     return create_file
@@ -121,7 +121,7 @@ def mock_merra_static_data(merra_coordinates, merra_dimensions):
             )
         
         dataset = xr.Dataset(data_vars)
-        dataset.to_netcdf(output_path)
+        dataset.to_netcdf(output_path, engine='h5netcdf')
         return output_path
     
     return create_file
@@ -154,7 +154,7 @@ def mock_precipitation_data(merra_coordinates, merra_dimensions):
             )
         })
         
-        dataset.to_netcdf(output_path)
+        dataset.to_netcdf(output_path, engine='h5netcdf')
         return output_path
     
     return create_file
@@ -182,7 +182,7 @@ def mock_observation_data(merra_coordinates, merra_dimensions):
             )
         })
         
-        dataset.to_netcdf(output_path)
+        dataset.to_netcdf(output_path, engine='h5netcdf')
         return output_path
     
     return create_file
@@ -209,7 +209,7 @@ def mock_climatology_data(merra_coordinates, merra_dimensions):
             )
         dataset = xr.Dataset(data_vars)
         fname = timestamp.strftime(f"climate_surface_doy%j_hour%H.nc")
-        dataset.to_netcdf(output_path / fname)
+        dataset.to_netcdf(output_path / fname, engine='h5netcdf')
 
         data_vars = {}
         # Vertical variables
@@ -230,7 +230,7 @@ def mock_climatology_data(merra_coordinates, merra_dimensions):
 
         dataset = xr.Dataset(data_vars)
         fname = timestamp.strftime(f"climate_vertical_doy%j_hour%H.nc")
-        dataset.to_netcdf(output_path / fname)
+        dataset.to_netcdf(output_path / fname, engine='h5netcdf')
         return output_path
     
     return create_file
@@ -378,7 +378,7 @@ def create_file_static(path: Path):
     )
     output_path = path / "static" / "static.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data.to_netcdf(output_path)
+    data.to_netcdf(output_path, engine='h5netcdf')
 
 
 def create_file_climatology(path: Path, year: int, month: int, day: int, hour: int):
@@ -394,14 +394,14 @@ def create_file_climatology(path: Path, year: int, month: int, day: int, hour: i
         data_surf[var] = (("latitude", "longitude"), day * np.ones((360, 576)))
     output_path = path / "climatology" / f"climate_surface_doy{doy:03}_hour{hour:02}.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data_surf.to_netcdf(output_path)
+    data_surf.to_netcdf(output_path, engine='h5netcdf')
 
     data_vert = xr.Dataset()
     for var in VERTICAL_VARS:
         data_vert[var] = (("levels", "latitude", "longitude"), hour * np.ones((len(LEVELS), 360, 576)))
     output_path = path / "climatology" / f"climate_vertical_doy{doy:03}_hour{hour:02}.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data_vert.to_netcdf(output_path)
+    data_vert.to_netcdf(output_path, engine='h5netcdf')
 
 def create_file_imerg(path: Path, accumulation_period: int, year: int, month: int, day: int, hour: int):
     """
@@ -412,7 +412,7 @@ def create_file_imerg(path: Path, accumulation_period: int, year: int, month: in
     data["surface_precip"] = (("latitude", "longitude"), hour * np.ones((360, 576)))
     output_path = path / f"imerg_{accumulation_period}" / f"{year}" / f"{month:02}" / f"{day:02}" / f"imerg_{year}{month:02}{day:02}{hour:02}0000.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data.to_netcdf(output_path)
+    data.to_netcdf(output_path, engine='h5netcdf')
 
 
 def create_file_dynamic(path: Path, year: int, month: int, day: int, hour: int):
@@ -427,7 +427,7 @@ def create_file_dynamic(path: Path, year: int, month: int, day: int, hour: int):
         data[var] = (("levels", "latitude", "longitude"), hour * np.ones((len(LEVELS), 360, 576)))
     output_path = path / "dynamic" / f"{year}" / f"{month:02}" / f"{day:02}" / f"merra2_{year}{month:02}{day:02}{hour:02}0000.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data.to_netcdf(output_path)
+    data.to_netcdf(output_path, engine='h5netcdf')
 
 
 def create_file_scalers(path: Path):
@@ -440,7 +440,7 @@ def create_file_scalers(path: Path):
         data[var] = 1.0
     output_path = path / "scaling_factors" / "anomaly_variance_surface.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data.to_netcdf(output_path)
+    data.to_netcdf(output_path, engine='h5netcdf')
 
     data = xr.Dataset()
     for var in VERTICAL_VARS:
@@ -448,7 +448,7 @@ def create_file_scalers(path: Path):
     data["lev"] = (("lev",), LEVELS)
     output_path = path / "scaling_factors" / "anomaly_variance_vertical.nc"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data.to_netcdf(output_path)
+    data.to_netcdf(output_path, engine='h5netcdf')
 
 
 @pytest.fixture(scope="session")

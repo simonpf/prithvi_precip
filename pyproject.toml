@@ -11,6 +11,7 @@ classifiers = [
 dependencies = [
     "cartopy",
     "click",
+    "h5netcdf",
     "numpy",
     "xarray",
     "matplotlib",
