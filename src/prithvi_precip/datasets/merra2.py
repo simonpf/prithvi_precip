@@ -15,7 +15,14 @@ from torch import nn
 from torch.utils.data import Dataset
 import xarray as xr
 
-from ..utils import to_datetime, to_datetime64, load_climatology, load_static_input
+from .utils import find_input_files
+from ..utils import (
+    to_datetime,
+    to_datetime64,
+    load_climatology,
+    load_static_input,
+    load_dynamic_input
+)
 from ..data.merra2 import SURFACE_VARS, VERTICAL_VARS
 
 
@@ -46,7 +53,7 @@ class MERRAInputData(Dataset):
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
-        self.times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.times, self.input_files = find_input_files(self.training_data_path, source="merra2")
         self.climatology = climatology
 
         self.input_time = input_time
@@ -57,32 +64,6 @@ class MERRAInputData(Dataset):
         self._pos_sig = None
         self.center_meridionally = center_meridionally
 
-    def find_merra_files(self, training_data_path: Path) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Gather all available MERRA2 files paths and extract available times.
-
-        Args:
-            training_data_path: Path object pointing to the directory containing the training data.
-
-        Return:
-            A tuple containing arrays of available inputs times and corresponding file
-            paths.
-        """
-        times = []
-        files = []
-        for path in sorted(list(training_data_path.glob("dynamic/**/merra2_*.nc"))):
-            try:
-                date = datetime.strptime(path.name, "merra2_%Y%m%d%H%M%S.nc")
-                date64 = to_datetime64(date)
-
-                files.append(str(path.relative_to(training_data_path)))
-                times.append(date64)
-            except ValueError:
-                continue
-
-        times = np.array(times)
-        files = np.array(files)
-        return times, files
 
     def calculate_valid_samples(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -107,32 +88,6 @@ class MERRAInputData(Dataset):
                 input_indices.append([ind + t_i // 3 for t_i in [-self.input_time, 0]])
                 output_indices.append([ind + t_l // 3 for t_l in self.lead_times])
         return np.array(input_indices), np.array(output_indices)
-
-    def load_dynamic_data(self, path: Path, slcs: Optional[Dict[str, slice]] = None) -> torch.Tensor:
-        """
-        Load all dynamic data from a given input file and return the data.
-
-        Args:
-            path: A path object pointing to the file to load.
-
-        Return:
-            A torch.Tensor containing all dynamic data for the given input file in the shape
-            [var + levels (channels), lat, lon].
-        """
-        LOGGER.debug(
-            "Loading dynamic input from file %s.",
-            path
-        )
-        all_data = []
-        if slcs is None:
-            slcs = {}
-        with xr.open_dataset(self.training_data_path / path) as data:
-            for var in SURFACE_VARS:
-                all_data.append(data[var].__getitem__(slcs).data[None].astype(np.float32))
-            for var in VERTICAL_VARS:
-                all_data.append(data[var].__getitem__(slcs).astype(np.float32))
-        all_data = torch.tensor(np.concatenate(all_data, axis=0))
-        return all_data
 
     def has_input(self, time: np.datetime64) -> bool:
         """
@@ -219,13 +174,13 @@ class MERRAInputData(Dataset):
         output_files = [self.input_files[ind] for ind in self.output_indices[ind]]
         output_times = [self.times[ind] for ind in self.output_indices[ind]]
 
-        dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+        dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
         static_in = torch.tensor(load_static_input(input_times[-1], self.data_path))
 
         input_time = (input_times[1] - input_times[0]).astype("timedelta64[h]").astype(np.float32)
         lead_time = (output_times[0] - input_times[1]).astype("timedelta64[h]").astype(np.float32)
 
-        dynamic_out = [self.load_dynamic_data(path) for path in output_files]
+        dynamic_out = [load_dynamic_input(self.training_data_path / path) for path in output_files]
         climate = [torch.tensor(load_climatology(time, self.data_path)) for time in output_times]
 
         # Remove one row along lat dimension.
@@ -268,7 +223,7 @@ class MERRAInputData(Dataset):
         dynamic_in = []
         for input_time in input_times:
             ind = np.searchsorted(self.input_times, input_time)
-            dynamic_in.append(self.load_dynamic_data(self.input_files[ind]))
+            dynamic_in.append(load_dynamic_input(self.training_data_path, self.input_files[ind]))
 
         static_time = input_times[-1]
         static_in = load_static_input(static_time, self.data_path)

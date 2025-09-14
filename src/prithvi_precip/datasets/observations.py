@@ -4,10 +4,11 @@ prithvi_precip.datasets.observations
 
 Provides dataset to load satellite data together with the MERRA-2 input data.
 """
+from functools import cache, cached_property
 import logging
 from pathlib import Path
 import shutil
-from typing import Union, List
+from typing import List, Optional, Tuple, Union
 
 from filelock import FileLock
 import numpy as np
@@ -15,7 +16,9 @@ import torch
 from torch.utils.data import Dataset
 import xarray as xr
 
-from .merra import MERRAInputData
+from .merra2 import MERRAInputData
+from .precipitation import DirectPrecipForecastDataset
+from ..utils import to_datetime
 
 
 LOGGER = logging.getLogger(__name__)

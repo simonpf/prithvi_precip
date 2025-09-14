@@ -21,8 +21,15 @@ from torch.utils.data import Dataset
 import xarray as xr
 from PrithviWxC.dataloaders.merra2 import output_scalers
 
-from .merra import MERRAInputData
-from ..utils import load_climatology, load_static_input, to_datetime64
+from .merra2 import MERRAInputData
+from ..data.merra2 import SURFACE_VARS, VERTICAL_VARS, LEVELS
+from .utils import find_input_files
+from ..utils import (
+    load_climatology,
+    load_dynamic_input,
+    load_static_input,
+    to_datetime64
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -81,7 +88,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         self.weighted_sampling = weighted_sampling
         self.source = source
 
-        self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.input_times, self.input_files = find_input_files(self.training_data_path, source=source)
         self.output_times, self.output_files = self.find_precip_files(
             self.training_data_path,
             reference_data=self.reference_data,
@@ -95,33 +102,6 @@ class DirectPrecipForecastDataset(MERRAInputData):
         if self.local_data is not None:
             self.split_and_copy_files()
 
-    def find_merra_files(self, training_data_path: Path) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Gather all available MERRA2 files paths and extract available times.
-
-        Args:
-            training_data_path: Path object pointing to the directory containing the training data.
-
-        Return:
-            A tuple containing arrays of available inputs times and corresponding file
-            paths.
-        """
-        times = []
-        files = []
-
-        for path in sorted(list(training_data_path.glob(f"dynamic/**/{self.source}_*.nc"))):
-            try:
-                date = datetime.strptime(path.name, f"{self.source}_%Y%m%d%H%M%S.nc")
-                date64 = to_datetime64(date)
-
-                files.append(str(path.relative_to(training_data_path)))
-                times.append(date64)
-            except ValueError:
-                continue
-
-        times = np.array(times)
-        files = np.array(files)
-        return times, files
 
     def split_and_copy_files(self) -> None:
         """
@@ -197,7 +177,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
 
         self.training_data_path = training_local
         self.data_path = self.training_data_path.parent
-        self.input_times, self.input_files = self.find_merra_files(self.training_data_path)
+        self.input_times, self.input_files = self.find_input_files(self.training_data_path, source="merra2")
         self.output_times, self.output_files = self.find_precip_files(
             self.training_data_path,
             reference_data=self.reference_data,
@@ -315,7 +295,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         try:
             input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
             input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
-            dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+            dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
 
             static_time = input_times[-1]
             static_in = torch.tensor(load_static_input(static_time, self.data_path))
@@ -393,7 +373,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 "Missing required input for time %s.",
                 input_times[0]
             )
-        dynamic_in = [self.load_dynamic_data(self.input_files[input_ind])]
+        dynamic_in = [load_dynamic_input(self.training_data_path / self.input_files[input_ind])]
         input_ind = np.searchsorted(self.input_times, input_times[1])
         input_time = self.input_times[input_ind]
         if input_time != input_times[1]:
@@ -401,7 +381,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 "Missing required input for time %s.",
                 input_times[1]
             )
-        dynamic_in += [self.load_dynamic_data(self.input_files[input_ind])]
+        dynamic_in += [load_dynamic_input(self.trainign_data_path / self.input_files[input_ind])]
 
 
         static_time = input_times[-1]
@@ -510,7 +490,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         try:
             input_files = [self.input_files[ind_in] for ind_in in self.input_indices[sample_ind]]
             input_times = [self.input_times[ind_in] for ind_in in self.input_indices[sample_ind]]
-            dynamic_in = [self.load_dynamic_data(path) for path in input_files]
+            dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
 
             static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.input_time, "h")
             static_in = [
@@ -570,7 +550,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
                 if output_time in self.input_times:
                     ind = np.searchsorted(self.input_times, output_time)
-                    y = self.load_dynamic_data(self.input_files[ind])
+                    y = load_dynamic_input(self.training_data_path / self.input_files[ind])
                     if self.climate:
                         y = (y - climates[-1])
                     y = y / self.output_sig

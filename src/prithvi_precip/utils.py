@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import cache
 import logging
 from pathlib import Path
+from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -242,3 +243,30 @@ def get_date(path: Path) -> datetime:
     date_str = path.name.split("_")[-1][:-3]
     date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
     return datetime(year=date.year, month=date.month, day=date.day, hour=date.hour)
+
+
+def load_dynamic_input(path: Path, slcs: Optional[Dict[str, slice]] = None) -> torch.Tensor:
+    """
+    Load all dynamic data from a given input file and return the data.
+
+    Args:
+        path: A path object pointing to the file to load the data from.
+
+    Return:
+        A torch.Tensor containing all dynamic data for the given input file in the shape
+        [var + levels (channels), lat, lon].
+    """
+    LOGGER.debug(
+        "Loading dynamic input from file %s.",
+        path
+    )
+    all_data = []
+    if slcs is None:
+        slcs = {}
+    with xr.open_dataset(path) as data:
+        for var in SURFACE_VARS:
+            all_data.append(data[var].__getitem__(slcs).data[None].astype(np.float32))
+        for var in VERTICAL_VARS:
+            all_data.append(data[var].__getitem__(slcs).astype(np.float32))
+    all_data = torch.tensor(np.concatenate(all_data, axis=0))
+    return all_data
