@@ -177,7 +177,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
 
         self.training_data_path = training_local
         self.data_path = self.training_data_path.parent
-        self.input_times, self.input_files = self.find_input_files(self.training_data_path, source="merra2")
+        self.input_times, self.input_files = find_input_files(self.training_data_path, source="merra2")
         self.output_times, self.output_files = self.find_precip_files(
             self.training_data_path,
             reference_data=self.reference_data,
