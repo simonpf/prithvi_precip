@@ -15,6 +15,7 @@ from prithvi_precip.metrics import (
     Bias,
     MSE,
     CorrelationCoef,
+    CRPS
 )
 
 
@@ -177,3 +178,51 @@ def test_correlation_coef_dep():
         task.result()
     result = corr_coef.compute()
     assert np.isclose(result.correlation_coef.data, -1.0, atol=1e-2)
+
+
+def crps_normal(z):
+    """
+    Closed form of CRPS score for a Normal reference distribution and a point value z.
+
+    Args:
+        z: The point value.
+
+    Returns:
+        The CRPS value of a predicted normal distribution for the realization z.
+
+    """
+    return z * (2.0 * stats.norm.cdf(z) - 1.0) + 2.0 * stats.norm.pdf(z) - 1.0 / np.sqrt(np.pi)
+
+
+
+def test_crps():
+    """
+    Tests CRPS metric using the closed form available for Gaussian distributions.
+    """
+
+    # Prediction are 32 quantiles of a Gaussian distribution
+    truths = np.random.uniform(size=10_000)
+    lons = np.zeros_like(truths)
+    lats = np.zeros_like(truths)
+    quantiles = np.linspace(0, 1, 34)[1:-1]
+    pred = stats.norm.ppf(quantiles)[..., None]
+    pred = np.broadcast_to(pred, (32,) + truths.shape)
+
+    crps_ref = crps_normal(truths).mean()
+
+    crps = CRPS()
+    crps.update(lons, lats, pred, truths, taus=quantiles)
+    res = crps.compute()
+    assert np.isclose(res.crps.data, crps_ref, rtol=0.02)
+
+    # For scalar predictions, the CRPS should just be the MAE
+    truths = np.random.uniform(size=10_000)
+    pred = np.random.uniform(size=10_000)
+    lons = np.zeros_like(truths)
+    lats = np.zeros_like(truths)
+
+    crps_ref = np.abs(pred - truths).mean()
+    crps = CRPS()
+    crps.update(lons, lats, pred, truths)
+    res = crps.compute()
+    assert np.isclose(res.crps.data, crps_ref, rtol=0.02)
