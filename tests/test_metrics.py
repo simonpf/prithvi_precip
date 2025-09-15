@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import List
 
 import numpy as np
+import pytest
 from scipy.fftpack import idctn
 from scipy import stats
 import xarray as xr
@@ -15,7 +16,8 @@ from prithvi_precip.metrics import (
     Bias,
     MSE,
     CorrelationCoef,
-    CRPS
+    CRPS,
+    ACC
 )
 
 
@@ -194,7 +196,6 @@ def crps_normal(z):
     return z * (2.0 * stats.norm.cdf(z) - 1.0) + 2.0 * stats.norm.pdf(z) - 1.0 / np.sqrt(np.pi)
 
 
-
 def test_crps():
     """
     Tests CRPS metric using the closed form available for Gaussian distributions.
@@ -226,3 +227,112 @@ def test_crps():
     crps.update(lons, lats, pred, truths)
     res = crps.compute()
     assert np.isclose(res.crps.data, crps_ref, rtol=0.02)
+
+
+@pytest.fixture
+def acc_test_data_without_background(tmp_path):
+    """
+    ACC test data without background signal.
+    """
+    output_path = tmp_path / "no_background"
+    output_path.mkdir()
+
+    lons = np.linspace(-180, 180, 256)
+    lats = np.linspace(-90, 90, 256)
+
+    for time in np.arange(
+            np.datetime64("2020-01-01"),
+            np.datetime64("2020-06-01"),
+            np.timedelta64(1, "D")
+    ):
+        date = time.astype("datetime64[s]").item()
+        fname = date.strftime("precip_%Y%m%d%H%M%S.nc")
+        precip = np.random.normal(size=(256, 256))
+        data = xr.Dataset({
+            "longitude": (("longitude",), lons),
+            "latitude": (("latitude",), lats),
+            "surface_precip": (("latitude", "latitude"), precip)
+        })
+        data.to_netcdf(output_path / fname)
+    return output_path
+
+
+@pytest.fixture
+def acc_test_data_with_background(tmp_path):
+    """
+    ACC test data no background.
+    """
+    output_path = tmp_path / "background"
+    output_path.mkdir()
+
+    lons = np.linspace(-180, 180, 256)
+    lats = np.linspace(-90, 90, 256)
+
+    for time in np.arange(
+            np.datetime64("2020-01-01"),
+            np.datetime64("2020-06-01"),
+            np.timedelta64(1, "D")
+    ):
+        date = time.astype("datetime64[s]").item()
+        fname = date.strftime("precip_%Y%m%d%H%M%S.nc")
+        precip = np.random.normal(size=(256, 256))
+        r = np.sqrt(lons[None] ** 2 + lats[:, None] ** 2)
+        data = xr.Dataset({
+            "longitude": (("longitude",), lons),
+            "latitude": (("latitude",), lats),
+            "surface_precip": (("latitude", "latitude"), r + precip)
+        })
+        data.to_netcdf(output_path / fname)
+    return output_path
+
+
+
+def test_acc(acc_test_data_without_background, acc_test_data_with_background):
+    """
+    Tests ACC score using two scenarios:
+
+        1. No backgroun variability, ACC should be same as correlation coeff
+        2. Independent signals with shared background variability, ACC should be 0.
+
+    """
+    # No background signal, ACC should be the same as CorCoef.
+    acc = ACC()
+    corr = CorrelationCoef()
+    acc.calculate_climatology(list(acc_test_data_without_background.glob("*.nc")))
+
+    lons = np.random.uniform(-180, 180, size=(256, 256))
+    lats = np.random.uniform(-90, 90, size=(256, 256))
+
+    truth = np.random.normal(size=(256, 256))
+    pred = truth + 0.1 * np.random.normal(size=(256, 256))
+
+    acc.update(lons, lats, truth, pred)
+    acc = acc.compute().acc.data
+
+    corr.update(lons, lats, truth, pred)
+    corr = corr.compute().correlation_coef.data
+
+    assert np.isclose(acc, corr, rtol=0.01)
+
+
+    # With background signal, ACC smaller be the same as CorCoef.
+    acc = ACC()
+    corr = CorrelationCoef()
+    acc.calculate_climatology(list(acc_test_data_with_background.glob("*.nc")))
+
+    lons = np.random.uniform(-180, 180, size=(512, 512))
+    lats = np.random.uniform(-90, 90, size=(512, 512))
+    r = np.sqrt(lons ** 2 + lats ** 2)
+
+    truth = r + np.random.normal(size=(512, 512))
+    pred = r + np.random.normal(size=(512, 512))
+
+    acc.update(lons, lats, truth, pred)
+    clim = acc.climatology
+    acc = acc.compute().acc.data
+
+    corr.update(lons, lats, truth, pred)
+    corr = corr.compute().correlation_coef.data
+
+    assert 0 < corr
+    assert np.isclose(acc, 0.0, atol=0.05)
