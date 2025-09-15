@@ -223,7 +223,7 @@ class MERRAInputData(Dataset):
         dynamic_in = []
         for input_time in input_times:
             ind = np.searchsorted(self.input_times, input_time)
-            dynamic_in.append(load_dynamic_input(self.training_data_path, self.input_files[ind]))
+            dynamic_in.append(load_dynamic_input(self.training_data_path / self.input_files[ind]))
 
         static_time = input_times[-1]
         static_in = load_static_input(static_time, self.data_path)
