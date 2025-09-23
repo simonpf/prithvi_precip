@@ -430,6 +430,54 @@ def create_file_dynamic(path: Path, year: int, month: int, day: int, hour: int):
     data.to_netcdf(output_path, engine='h5netcdf')
 
 
+def create_observation_file(path: Path, year: int, month: int, day: int, hour: int):
+    """
+    Create a dummy MERRA2 training data file containing the day of the year in the surface variables
+    and the hour of the day in the vertical variables.
+    """
+    data = xr.Dataset()
+    for tile_i in range(12):
+        for tile_j in range(18):
+
+            observations = []
+            obs_ids = []
+            frequency = []
+            offset = []
+            polarization = []
+            time_offset = []
+
+            for ind in range(10):
+                if 0.8 < np.random.rand():
+                    observations.append(day * np.ones((30, 32)))
+                    obs_ids.append(year)
+                    frequency.append(month)
+                    offset.append(day)
+                    polarization.append(np.random.randint(0, 5))
+                    time_offset.append(hour * np.ones((30, 32)))
+
+            if len(observations) == 0:
+                continue
+
+            observations = np.stack(observations)
+            obs_ids = np.array(obs_ids)
+            frequency = np.array(frequency)
+            offset = np.array(offset)
+            polarization = np.array(polarization)
+            time_offset = np.array(time_offset)
+
+            data[f"observations_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}", "lat_tile", "lon_tile"), observations)
+            data[f"obs_id_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}",), obs_ids)
+            data[f"frequency_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}",), frequency)
+            data[f"offset_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}",), offset)
+            data[f"polarization_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}",), polarization)
+            data[f"time_offset_{tile_i:02}_{tile_j:02}"] = ((f"tiles_{tile_i:02}_{tile_j:02}", "lat_tile", "lon_tile"), time_offset)
+
+
+    output_path = path / "obs" / f"{year}" / f"{month:02}" / f"{day:02}" / f"obs_{year}{month:02}{day:02}{hour:02}0000.nc"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    data.to_netcdf(output_path, engine='h5netcdf')
+
+
 def create_file_scalers(path: Path):
     """
     Create a dummy IMERG training data file containing the hour of the day as precipitation values so that
@@ -464,6 +512,7 @@ def imerg_training_data_1(tmp_path_factory):
         create_file_climatology(data_path, 2020, 1, 1, hour)
         create_file_dynamic(training_data_path, 2020, 1, 1, hour)
         create_file_imerg(training_data_path, 1, 2020, 1, 1, hour)
+        create_observation_file(training_data_path, 1, 2020, 1, 1, hour)
 
     create_file_scalers(training_data_path)
 
@@ -481,5 +530,6 @@ def imerg_training_data_3(tmp_path_factory):
         create_file_dynamic(base_dir, 2020, 1, 1, hour)
         create_file_climatology(base_dir, 2020, 1, 1, hour)
         create_file_imerg(base_dir, 3, 2020, 1, 1, hour)
+        create_observation_file(base_dir, 2020, 1, 1, hour)
 
     return base_dir

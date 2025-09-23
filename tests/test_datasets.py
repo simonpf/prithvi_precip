@@ -20,6 +20,7 @@ from prithvi_precip.datasets import (
     MERRAInputData,
     DirectPrecipForecastDataset,
     AutoregressivePrecipForecastDataset,
+    ObservationLoader
 )
 
 from prithvi_precip.data.merra2 import (
@@ -211,3 +212,18 @@ def test_autoregressive_precip_forecast_dataset(imerg_training_data_1):
 
     assert (x["lead_time"] == 3.0).all()
     assert (x["input_time"] == 3.0).all()
+
+
+def test_observation_loader(imerg_training_data_3):
+    """
+    Test loading observations using the ObservationLoader
+    """
+    obs_loader = ObservationLoader(
+        imerg_training_data_3 / "obs"
+    )
+    obs, meta = obs_loader.load_observations(np.datetime64("2020-01-01T12:00:00"))
+
+    assert obs.shape == (12, 18, 32, 1, 30, 32)
+
+    obs = np.unique(obs.numpy())
+    assert (-1.0 + 2.0 / 300.0) in obs
