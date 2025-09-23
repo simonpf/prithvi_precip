@@ -17,7 +17,8 @@ from prithvi_precip.metrics import (
     MSE,
     CorrelationCoef,
     CRPS,
-    ACC
+    ACC,
+    SEEPS
 )
 
 
@@ -286,7 +287,6 @@ def acc_test_data_with_background(tmp_path):
     return output_path
 
 
-
 def test_acc(acc_test_data_without_background, acc_test_data_with_background):
     """
     Tests ACC score using two scenarios:
@@ -306,10 +306,10 @@ def test_acc(acc_test_data_without_background, acc_test_data_with_background):
     truth = np.random.normal(size=(256, 256))
     pred = truth + 0.1 * np.random.normal(size=(256, 256))
 
-    acc.update(lons, lats, truth, pred)
+    acc.update(lons, lats, pred, truth)
     acc = acc.compute().acc.data
 
-    corr.update(lons, lats, truth, pred)
+    corr.update(lons, lats, pred, truth)
     corr = corr.compute().correlation_coef.data
 
     assert np.isclose(acc, corr, rtol=0.01)
@@ -327,12 +327,79 @@ def test_acc(acc_test_data_without_background, acc_test_data_with_background):
     truth = r + np.random.normal(size=(512, 512))
     pred = r + np.random.normal(size=(512, 512))
 
-    acc.update(lons, lats, truth, pred)
+    acc.update(lons, lats, pred, truth)
     clim = acc.climatology
     acc = acc.compute().acc.data
 
-    corr.update(lons, lats, truth, pred)
+    corr.update(lons, lats, pred, truth)
     corr = corr.compute().correlation_coef.data
 
     assert 0 < corr
     assert np.isclose(acc, 0.0, atol=0.05)
+
+
+@pytest.fixture
+def seeps_test_data_with_background(tmp_path):
+    """
+    SEEPS test data with background.
+    """
+    output_path = tmp_path / "background"
+    output_path.mkdir()
+
+    lons = np.linspace(-180, 180, 256)
+    lats = np.linspace(-90, 90, 256)
+
+    for time in np.arange(
+            np.datetime64("2020-01-01"),
+            np.datetime64("2020-12-01"),
+            np.timedelta64(1, "D")
+    ):
+        date = time.astype("datetime64[s]").item()
+        fname = date.strftime("precip_%Y%m%d%H%M%S.nc")
+        r = np.sqrt(lons[None] ** 2 + lats[:, None] ** 2)
+        precip = np.random.exponential(scale=r / 10.0, size=r.shape)
+        data = xr.Dataset({
+            "longitude": (("longitude",), lons),
+            "latitude": (("latitude",), lats),
+            "surface_precip": (("latitude", "latitude"), precip)
+        })
+        data.to_netcdf(output_path / fname)
+    return output_path
+
+
+def test_seeps(seeps_test_data_with_background):
+    """
+    Tests SEEPS score on an example where precipitation is assumed to follow
+    a exponential distribution with spatially dependent scale parameter.
+    """
+    # With background signal, SEEPS smaller be the same as CorCoef.
+    seeps_0 = SEEPS()
+    seeps_1 = SEEPS()
+    corr = CorrelationCoef()
+    files = sorted(list(seeps_test_data_with_background.glob("*.nc")))
+    seeps_0.calculate_climatology(files)
+    seeps_1.calculate_climatology(files)
+
+    clim = seeps_0.climatology
+
+    medians = np.zeros_like(clim.surface_precip_second_tercile.data)
+    for lat_ind in range(clim.latitude.size):
+        for lon_ind in range(clim.longitude.size):
+            medians[lat_ind, lon_ind] = np.interp(0.5, clim.cdf.data[lat_ind, lon_ind], clim.surface_precip.data)
+    clim["median"] = (("latitude", "longitude"), medians)
+
+    for path in files:
+        with xr.open_dataset(path) as data:
+            lons = data.longitude.load().data
+            lats = data.latitude.load().data
+            medians_i = clim["median"].interp(latitude=lats, longitude=lons)
+            sp = data.surface_precip.load().data
+            lons, lats = np.meshgrid(lons, lats)
+            seeps_0.update(lons, lats, sp, sp)
+            seeps_1.update(lons, lats, medians_i.data, sp)
+
+    seeps = seeps_0.compute().seeps.data
+    assert np.isclose(seeps, 0.0, atol=0.1)
+
+    seeps = seeps_1.compute().seeps.data
+    assert np.isclose(seeps, 1.0, atol=0.1)

@@ -35,9 +35,7 @@ class Metric:
     """
     Base class for metrics that manages shared data arrays and can be used to manage the
     access to those arrays.
-
     """
-
     def __init__(self, buffers: Dict[str, Tuple[Tuple[int], str]]):
         super().__init__()
         self.lock = get_manager().Lock()
@@ -572,6 +570,7 @@ class SEEPS(QuantificationMetric):
             classes_pred[pred < self.dry_threshold] = 0
             classes_pred[self.dry_threshold <= pred] = 1
             classes_pred[spt <= pred] = 2
+            mask = spt <= pred
 
             zeros = np.zeros_like(p_1)
             with warnings.catch_warnings():
@@ -582,10 +581,10 @@ class SEEPS(QuantificationMetric):
                     np.stack([1 / p_1 + 1.0 / (1.0 - p_3), 1.0 / (1.0 - p_3), zeros])
                 ]))
 
-            scores = 0.5 * costs[classes_target, classes_pred, np.arange(p_1.size)]
+            scores = 0.5 * costs[classes_pred, classes_target, np.arange(p_1.size)]
             valid = np.isfinite(scores)
             scores = scores[valid]
-            weights = weights[valid]
+            weights = np.ones_like(weights[valid])
 
             with self.lock:
                 self.seeps += (weights * scores).sum()
@@ -670,6 +669,19 @@ class ACC(CorrelationCoef):
         self.climatology = result
         return result
 
+
+    def compute(self) -> xr.Dataset:
+        """
+        Calculate the bias for all results passed to this metric object.
+
+        Return:
+            An xarray.Dataset containing a single, scalar variable 'bias' or 'bias_{name}'.
+
+        """
+        res = super().compute().rename(correlation_coef="acc")
+        res.acc.attrs["full_name"] = "Anomaly correlation coef."
+        res.acc.attrs["unit"] = ""
+        return res
 
     def update(
             self,
