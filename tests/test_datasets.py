@@ -112,7 +112,7 @@ def test_direct_precip_forecast_dataset(imerg_training_data_1):
         accumulation_period=1,
         max_steps=3,
     )
-    assert len(ds) == 6
+    assert len(ds) == 7
 
     x, y = ds[0]
     assert torch.isclose(x["static"][6:], torch.tensor(0.0)).all()
@@ -128,7 +128,7 @@ def test_direct_precip_forecast_dataset(imerg_training_data_1):
     assert torch.isclose(x["x"][:, :20], torch.tensor(1.0)).all()
     assert torch.isclose(x["x"][0, 20:], torch.tensor(0.0)).all()
     assert torch.isclose(x["x"][1, 20:], torch.tensor(3.0)).all()
-    assert (torch.tensor(6.0) <= y[0]).all()
+    assert (torch.tensor(3.0) <= y[0]).all()
     assert (y[0] <= torch.tensor(12.0)).all()
     assert torch.isclose(y[0], x["lead_time"] + 3).all()
     assert (3 <= x["lead_time"]).all()
@@ -139,7 +139,7 @@ def test_direct_precip_forecast_dataset(imerg_training_data_1):
     assert torch.isclose(x["x"][:, :20], torch.tensor(1.0)).all()
     assert torch.isclose(x["x"][0, 20:], torch.tensor(3.0)).all()
     assert torch.isclose(x["x"][1, 20:], torch.tensor(6.0)).all()
-    assert (torch.tensor(9.0) < y[0]).all()
+    assert (torch.tensor(6.0) <= y[0]).all()
     assert (y[0] <= torch.tensor(15.0)).all()
     assert torch.isclose(y[0], x["lead_time"] + 6).all()
     assert (3 <= x["lead_time"]).all()

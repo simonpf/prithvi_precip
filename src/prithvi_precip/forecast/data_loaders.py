@@ -15,6 +15,7 @@ import torch
 from torch import nn
 import xarray as xr
 
+from ..datasets.observations import ObservationLoader
 from ..utils import (
     find_input_files,
     load_climatology,
@@ -35,8 +36,26 @@ class DirectForecastLoader:
             input_time: int = 3,
             source: str = "merra2",
             batch_size: Optional[int] = None,
-            center_meridionally: bool = True
+            center_meridionally: bool = True,
+            observation_layers: Optional[int] = None,
+            n_tiles: Tuple[int, int] = (12, 18),
+            tile_size: Tuple[int, int] = (30, 32),
     ):
+        """
+        Args:
+            input_data_path: Path pointing to the input dat.a
+            init_times: Array specifying the initialization times
+            n_steps: The number of forecast steps to perform.
+            input_time: The tmie difference between input steps in hours.
+            source: Which dataset the input is derived from ('merra2' or 'geos')
+            batch_size: The batch size to use.
+            center_meridionally: Set to True to averaeg input instead of cropping.
+            observation_layers: Set to a positive number specifying the observation layers
+                 to load to enable observation loader.
+            n_tiles: A tuple specifying the number of meridional and zonal observation tiles,
+                 respectively.
+            tile_size: A  tuple specifying the zonal and meridional size of the observation tiles.
+        """
         self.input_data_path = Path(input_data_path)
         self.input_time = input_time
 
@@ -52,6 +71,15 @@ class DirectForecastLoader:
 
         self.n_steps = n_steps
         self.batches_per_input = ceil(n_steps / self.batch_size)
+
+        if observation_layers is not None:
+            self.obs_loader = ObservationLoader(
+                Path(input_data_path) / "obs",
+                n_tiles=n_tiles,
+                tile_size=tile_size
+            )
+        else:
+            self.obs_loader = None
 
     def __len__(self) -> int:
         return len(self.input_indices) * self.batches_per_input
@@ -134,6 +162,24 @@ class DirectForecastLoader:
             "input_time": torch.repeat_interleave(torch.tensor(input_time)[None], step_end - step_start, 0),
             "lead_time": torch.stack(lead_times)
         }
+
+        if self.obs_loader is not None:
+            obs = []
+            obs_meta = []
+            for time_ind, time in enumerate(input_times):
+                obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
+                obs.append(obs_t)
+                obs_meta.append(meta_t)
+
+            obs = torch.stack(obs, 0)
+            obs_mask = torch.zeros_like(obs) #obs < -2.9
+            obs = torch.nan_to_num(obs, nan=-3.0)
+            obs_meta = torch.stack(obs_meta, 0)
+
+            input_data["obs"] = torch.repeat_interleave(obs[None], step_end - step_start, 0)
+            input_data["obs_mask"] = torch.repeat_interleave(obs_mask[None], step_end - step_start, 0)
+            input_data["obs_meta"] = torch.repeat_interleave(obs_meta[None], step_end - step_start, 0)
+
         return init_time, valid_times, input_data
 
 
@@ -222,7 +268,6 @@ class AutoregressiveForecastLoader:
             transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             transform_3d = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
         else:
-            print("TRANSA")
             transform = partial(nn.functional.pad, pad=(0, 0, 0, -1))
             transform_3d = partial(nn.functional.pad, pad=(0, 0, 0, -1, 0, 0), mode="constant", value=0)
 

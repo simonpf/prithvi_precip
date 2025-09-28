@@ -30,7 +30,8 @@ def test_direct_forecast_loader(imerg_training_data_1):
             np.timedelta64(3, "h")
         ),
         n_steps=4,
-        batch_size=2
+        batch_size=2,
+        observation_layers=16
     )
     assert len(ds) == 4
 
@@ -61,6 +62,14 @@ def test_direct_forecast_loader(imerg_training_data_1):
     assert torch.isclose(cos_hod, torch.cos(2 * np.pi * torch.tensor(3) / 24), atol=1e-3).all()
     sin_hod = input_data["static"][1, 5]
     assert torch.isclose(sin_hod, torch.sin(2 * np.pi * torch.tensor(3) / 24), atol=1e-3).all()
+
+    assert "obs" in input_data
+    assert "obs_meta" in input_data
+    vals = np.unique(input_data["obs"].numpy())
+    assert np.all(np.isfinite(vals))
+    assert -1.5 in vals
+    assert (-1.0 + 2.0 * 1 / 300.0) in vals
+
 
     # Dynamic input should be init time and previous timestep.
     assert torch.isclose(input_data["x"][:, 0, :20], torch.tensor(1.0)).all()

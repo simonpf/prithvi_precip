@@ -512,7 +512,7 @@ def imerg_training_data_1(tmp_path_factory):
         create_file_climatology(data_path, 2020, 1, 1, hour)
         create_file_dynamic(training_data_path, 2020, 1, 1, hour)
         create_file_imerg(training_data_path, 1, 2020, 1, 1, hour)
-        create_observation_file(training_data_path, 1, 2020, 1, 1, hour)
+        create_observation_file(training_data_path, 2020, 1, 1, hour)
 
     create_file_scalers(training_data_path)
 

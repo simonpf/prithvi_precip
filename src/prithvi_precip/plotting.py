@@ -8,9 +8,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import cartopy.crs as ccrs
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import Normalize, LogNorm
 from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize, LogNorm
+from matplotlib.ticker import FixedLocator
 import numpy as np
 import torch
 import xarray as xr
@@ -186,3 +187,30 @@ def animate_results(
     plt.close()
 
     return ani
+
+
+def add_ticks(
+        ax: plt.Axes,
+        lons: List[float],
+        lats: list[float],
+        left=True,
+        bottom=True
+) -> None:
+    import cartopy.crs as ccrs
+    """
+    Add tick to cartopy Axes object.
+
+    Args:
+        ax: The Axes object to which to add the ticks.
+        lons: The longitude coordinate at which to add ticks.
+        lats: The latitude coordinate at which to add ticks.
+        left: Whether or not to draw ticks on the y-axis.
+        bottom: Whether or not to draw ticks on the x-axis.
+    """
+    gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True, linewidth=0, color='none')
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.left_labels = left
+    gl.bottom_labels = bottom
+    gl.xlocator = FixedLocator(lons)
+    gl.ylocator = FixedLocator(lats)

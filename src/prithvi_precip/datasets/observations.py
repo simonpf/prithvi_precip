@@ -7,6 +7,7 @@ Provides dataset to load satellite data together with the MERRA-2 input data.
 from functools import cache, cached_property
 import logging
 from pathlib import Path
+import re
 import shutil
 from typing import List, Optional, Tuple, Union
 
@@ -40,9 +41,9 @@ class ObservationLoader(Dataset):
         Args:
             observation_path: Path containing the observations.
             observation_layers: The number of observation layers to load.
-            n_tiles: A tuple specifying containing the number of meridional
-                and zonal tiles, respectively.
-            tile_size: The size of the observation tiles.
+            n_tiles: A tuple specifying the number of meridional and zonal tiles,
+                 respectively.
+            tile_size: A  tuple specifying the size of the observation tiles.
         """
         self.observation_path = Path(observation_path)
         self.observation_layers = observation_layers
@@ -52,7 +53,17 @@ class ObservationLoader(Dataset):
         self.time_step = 3
         self.freq_min = 1.0
         self.freq_max = 30e3
-        self.file_regexp = None
+        self._obs_regexp = None
+
+
+    @property
+    def obs_regexp(self) -> Union[re.Pattern, None]:
+        return self._obs_regexp
+
+    @obs_regexp.setter
+    def obs_regexp(self, regexp: str) -> None:
+        self._obs_regexp = re.compile(regexp)
+
 
     def copy_files(
             self,
@@ -63,6 +74,12 @@ class ObservationLoader(Dataset):
     ) -> None:
         """
         Shards data across nodes and copies them to the location pointed to by self.local_data.
+
+        Args:
+            input_times: An array containing the time stamps for which observations are required.
+            input_time: The time difference between input steps in hours.
+            local_data: The local data path of the machine.
+            validation: If 'True' data will be copied to local validation data folder.
         """
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
@@ -117,14 +134,6 @@ class ObservationLoader(Dataset):
                 sleep(0.1)
 
         rank = int(os.environ.get("RANK", 0))
-
-    def worker_init_fn(self, w_id: int) -> None:
-        """
-        Seeds the dataset loader's random number generator.
-        """
-        #tracemalloc.start()
-        seed = int.from_bytes(os.urandom(4), "big") + w_id
-        self.rng = np.random.default_rng(seed)
 
     @cached_property
     def start_time(self):
@@ -225,6 +234,76 @@ class ObservationLoader(Dataset):
         })
         return obs_mask
 
+    def get_available_observations(self, time: np.datetime64) -> List[str]:
+        """
+        Return list of observation layers available for a given time.
+
+        Args:
+            time: A numpy.datetime64 object defining the time.
+
+        Returns:
+            A list of the observation layers names available that data.
+        """
+        date = to_datetime(time)
+        path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
+        if not path.exists():
+            return []
+
+        stats = self.stats_data
+        all_vars = stats.attrs["variables"].split(",")
+        n_vars = len(all_vars)
+
+        obs_ids = []
+
+        with xr.open_dataset(path) as obs_data:
+            for meridional_index in range(self.n_tiles[0]):
+                for zonal_index in range(self.n_tiles[1]):
+                    tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
+                    if tilename in obs_data:
+                        obs_ids += list(obs_data[tilename].data)
+
+        obs_ids = set(obs_ids)
+        available = [all_vars[obs_id] for obs_id in obs_ids]
+        return available
+
+    def get_observations(self, time: np.datetime64, obs: str) -> np.ndarray:
+        """
+        Return single observation layer.
+
+        Args:
+            time: A numpy.datetime64 object defining the time.
+            obs: The name of the observation layer to load.
+
+        Returns:
+            A list of the observation layers names available that data.
+        """
+        stats = self.stats_data
+        date = to_datetime(time)
+        path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
+        if not path.exists():
+            return []
+
+        all_vars = stats.attrs["variables"].split(",")
+        obs_id = all_vars.index(obs)
+
+        obs_ids = []
+        observations = np.nan * np.ones(self.n_tiles + self.tile_size)
+
+        with xr.open_dataset(path) as obs_data:
+            for meridional_index in range(self.n_tiles[0]):
+                for zonal_index in range(self.n_tiles[1]):
+                    obs_id_name = f"obs_id_{meridional_index:02}_{zonal_index:02}"
+                    obs_name = f"observations_{meridional_index:02}_{zonal_index:02}"
+                    if obs_id_name not in obs_data:
+                        continue
+                    obs_ids = obs_data[obs_id_name].data
+                    if obs_id in obs_ids:
+                        obs_ind = list(obs_ids).index(obs_id)
+                        observations[meridional_index, zonal_index, :, :] = obs_data[obs_name].data[obs_ind]
+
+        n_y_g, n_x_g, n_y_l, n_x_l = observations.shape
+        observations = np.transpose(observations, (0, 2, 1, 3)).reshape(n_y_g * n_y_l, n_x_g * n_x_l)
+        return observations
 
     @cached_property
     def obs_vars(self):
@@ -255,7 +334,7 @@ class ObservationLoader(Dataset):
         path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
 
         observations = -1.5 * torch.ones(self.n_tiles + (self.observation_layers, 1) + self.tile_size)
-        meta_data = --1.5 * torch.ones(self.n_tiles + (self.observation_layers, 8) + self.tile_size)
+        meta_data = -1.5 * torch.ones(self.n_tiles + (self.observation_layers, 8) + self.tile_size)
 
         if not path.exists():
             LOGGER.warning(
@@ -270,7 +349,6 @@ class ObservationLoader(Dataset):
         except Exception:
             return observations, meta_data
 
-
         for row_ind in range(self.n_tiles[0]):
             for col_ind in range(self.n_tiles[1]):
 
@@ -280,15 +358,26 @@ class ObservationLoader(Dataset):
 
                 try:
                     obs = data[obs_name].data
-                    if randomize:
-                        inds = np.random.permutation(obs.shape[0])
-                    else:
-                        inds = np.arange(obs.shape[0])
 
-                    tiles = min(obs.shape[0], self.observation_layers)
+
+                    if self.obs_regexp is not None:
+                        obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
+                        obs_ids = data[obs_ids].data
+                        inds = [ind for ind, obs_id in enumerate(obs_ids) if self.obs_regexp.match(self.obs_vars[obs_id])]
+                        inds = np.array(inds)
+                        if len(inds) == 0:
+                            continue
+                    else:
+                        if randomize:
+                            inds = np.random.permutation(obs.shape[0])
+                        else:
+                            inds = np.arange(obs.shape[0])
+
+                    tiles = min(obs.shape[0], self.observation_layers, len(inds))
 
                     obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                     obs_ids = data[obs_ids].data[inds[:tiles]]
+
                     minmax = np.array([self.get_minmax(obs_id) for obs_id in obs_ids])
                     minmax = minmax[..., None, None]
 
@@ -430,8 +519,8 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             obs.append(obs_t)
             meta.append(meta_t)
         obs = torch.stack(obs, 0)
-        obs_mask = torch.zeros_like(obs) #obs < -2.9
-        obs = torch.nan_to_num(obs, nan=-3.0)
+        obs_mask = obs < -1.4
+        obs = torch.nan_to_num(obs, nan=-1.5)
         meta = torch.stack(meta, 0)
 
         x["obs"] = obs

@@ -5,7 +5,7 @@ prithvi_precip.forecast.runners
 Functions to drive forecasts across several inputs.
 """
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 import torch
@@ -54,7 +54,8 @@ def run_direct_forecast(
         output_path: Path,
         dtype: torch.dtype = torch.float32,
         device: str = "cpu",
-        post_process_fn: Callable[[Dict[str, Any]], xr.Dataset] = post_process_results
+        post_process_fn: Callable[[Dict[str, Any]], xr.Dataset] = post_process_results,
+        forward_kwargs: Optional[Dict[str, Any]] = None
 ):
     """
     Run forecast and store results.
@@ -67,9 +68,13 @@ def run_direct_forecast(
         device: The device to run the forecast on.
         post_process_fn: A post-processing function to use to turn the raw model outputs into
             an xarray.Dataset containing the results.
+        forward_kwargs: Keyword arguments forwarded to the models forward method.
     """
     model = model.to(device=device, dtype=dtype).eval()
     results = []
+
+    if forward_kwargs is None:
+        forward_kwargs = {}
 
     for inpt in tqdm(iter(data_loader), total=len(data_loader)):
 
@@ -79,7 +84,7 @@ def run_direct_forecast(
         }
 
         with torch.no_grad():
-            res = post_process_fn(batch, model(batch))
+            res = post_process_fn(batch, model(batch, **forward_kwargs))
             res = res.rename(batch="valid_time")
             res["initialization_time"] = init_time
             res["valid_time"] = (("valid_time",), valid_times)
