@@ -8,4 +8,4 @@ import logging
 
 from .merra2 import MERRAInputData
 from .precipitation import DirectPrecipForecastDataset, AutoregressivePrecipForecastDataset
-from .observations import ObservationLoader
+from .observations import ObservationLoader, DirectPrecipForecastWithObsDataset
