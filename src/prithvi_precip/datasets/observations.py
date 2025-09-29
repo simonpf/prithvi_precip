@@ -6,6 +6,7 @@ Provides dataset to load satellite data together with the MERRA-2 input data.
 """
 from functools import cache, cached_property
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
