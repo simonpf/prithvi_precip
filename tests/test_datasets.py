@@ -158,6 +158,39 @@ def test_autoregressive_precip_forecast_dataset(imerg_training_data_1):
     )
     assert len(ds) == 6
 
+    ds = AutoregressivePrecipForecastDataset(
+        imerg_training_data_1,
+        scaling_factors = imerg_training_data_1 / "scaling_factors",
+        accumulation_period=1,
+        lead_time=6,
+        max_steps=2,
+    )
+    assert len(ds) == 5
+    x, y = ds[0]
+    assert (x["lead_time"] == 6.0).all()
+    assert (x["input_time"] == 3.0).all()
+
+    ds = AutoregressivePrecipForecastDataset(
+        imerg_training_data_1,
+        scaling_factors = imerg_training_data_1 / "scaling_factors",
+        accumulation_period=1,
+        input_time=6,
+        lead_time=6,
+        max_steps=2,
+    )
+    x, y = ds[0]
+    assert (x["lead_time"] == 6.0).all()
+    assert (x["input_time"] == 6.0).all()
+    assert len(ds) == 4
+
+    ds = AutoregressivePrecipForecastDataset(
+        imerg_training_data_1,
+        scaling_factors = imerg_training_data_1 / "scaling_factors",
+        accumulation_period=1,
+        max_steps=3,
+    )
+    assert len(ds) == 6
+
     x, y = ds[0]
 
     # Check first static tensor

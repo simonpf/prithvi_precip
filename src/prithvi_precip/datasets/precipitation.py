@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import shutil
 from time import sleep
-from typing import Optional, Union, Tuple
+from typing import List, Optional, Union, Tuple
 
 import numpy as np
 import torch
@@ -43,7 +43,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
     def __init__(
             self,
             training_data_path: Union[Path, str],
-            input_time: int = 3,
+            input_time: Union[int, List[int]] = 3,
+            lead_time: int = 3,
             accumulation_period: int = 3,
             max_steps: int = 24,
             climate: bool = True,
@@ -58,7 +59,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
         """
         Args:
             training_data_path: The directory containing the dynamic input data.
-            input_time: The time difference between input samples.
+            input_time: A single int or a list of ints specifying the time different between the two
+                input timesteps.
+            lead_time: The lead time step.
             accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
             climate: Whether to include climatology data in the input.
@@ -74,7 +77,19 @@ class DirectPrecipForecastDataset(MERRAInputData):
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
-        self.input_time = input_time
+        if not isinstance(input_time, list):
+            self.input_steps = [input_time]
+        else:
+            self.input_steps = input_time
+
+        if lead_time is None:
+            lead_time = self.input_steps[0]
+            LOGGER.info(
+                "No explicit lead time provided. Falling back to input step %s h.",
+                lead_time
+            )
+        self.lead_time = lead_time
+
         self.accumulation_period = accumulation_period
         self.max_steps = max_steps
         self.climate = climate
@@ -257,17 +272,25 @@ class DirectPrecipForecastDataset(MERRAInputData):
         input_indices = []
         output_indices = []
         for ind, sample_time in enumerate(self.input_times):
-            input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
+            input_times = [sample_time - np.timedelta64(step, "h") for step in self.input_steps]
 
             output_times = [
-                sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in np.arange(0, self.max_steps + 1)
+                sample_time + np.timedelta64(t_i * self.lead_time, "h") for t_i in np.arange(0, self.max_steps + 1)
             ]
             output_times = [t_o for t_o in output_times if t_o in self.output_times]
-            valid = all([t_i in self.input_times for t_i in input_times])
+
+            valid = sample_time in self.input_times and any([t_i in self.input_times for t_i in input_times])
+
             if valid and len(output_times) > 0:
 
-                prev_ind = np.searchsorted(self.input_times, input_times[0])
-                input_indices.append([prev_ind, ind])
+                input_inds = []
+                for input_time in input_times:
+                    if not input_time in self.input_times:
+                        input_inds.append(-1)
+                    else:
+                        input_inds.append(np.searchsorted(self.input_times, input_times[0]))
+                input_inds.append(ind)
+                input_indices.append(input_inds)
 
                 output_inds = []
                 for output_time in output_times:
@@ -293,14 +316,25 @@ class DirectPrecipForecastDataset(MERRAInputData):
             ind = lower
 
         try:
-            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
-            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            input_time = self.input_steps[0]
+            input_indices = self.input_indices[ind]
+            if self.validation:
+                step_ind = int(ind * self.sampling_rate) % len(self.input_steps)
+                input_indices = [input_indices[step_ind], input_indices[-1]]
+                input_time = self.input_steps[step_ind]
+            else:
+                if 1 < len(self.input_steps):
+                    step_ind = self.rng.integers(len(self.input_steps))
+                    input_indices = [input_indices[step_ind], input_indices[-1]]
+                    input_time = self.input_steps[step_ind]
+
+            input_files = [self.input_files[ind] for ind in input_indices]
+            input_times = [self.input_times[ind] for ind in input_indices]
+
             dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
 
             static_time = input_times[-1]
             static_in = torch.tensor(load_static_input(static_time, self.data_path))
-
-            input_time = self.input_time
 
             # Remove one row along lat dimension.
             pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
@@ -362,54 +396,6 @@ class DirectPrecipForecastDataset(MERRAInputData):
             return self[new_ind]
 
 
-    def get_forecast_input(self, init_time: np.datetime64, n_steps: int):
-
-        input_times = [init_time - np.timedelta64(self.input_time, "h"), init_time]
-
-        input_ind = np.searchsorted(self.input_times, input_times[0])
-        input_time = self.input_times[input_ind]
-        if input_time != input_times[0]:
-            raise ValueError(
-                "Missing required input for time %s.",
-                input_times[0]
-            )
-        dynamic_in = [load_dynamic_input(self.training_data_path / self.input_files[input_ind])]
-        input_ind = np.searchsorted(self.input_times, input_times[1])
-        input_time = self.input_times[input_ind]
-        if input_time != input_times[1]:
-            raise ValueError(
-                "Missing required input for time %s.",
-                input_times[1]
-            )
-        dynamic_in += [load_dynamic_input(self.trainign_data_path / self.input_files[input_ind])]
-
-
-        static_time = input_times[-1]
-        static_in = torch.tensor(load_static_input(static_time, self.data_path))
-
-        if self.center_meridionally:
-            transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
-        else:
-            transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
-
-        inpt = {
-            "x": (transform(torch.stack(dynamic_in, 0))[None]).repeat_interleave(n_steps, dim=0),
-            "static": (transform(static_in)[None]).repeat_interleave(n_steps, dim=0),
-            "input_time": ((torch.tensor(self.input_time).to(dtype=torch.float32))[None]).repeat_interleave(n_steps, dim=0),
-        }
-
-        output_times = init_time + np.timedelta64(self.input_time, "h") * np.arange(1, n_steps + 1)
-        climates = []
-        if self.climate:
-            for output_time in output_time:
-                climates.append(transform(load_climatology(output_time, self.data_path)))
-
-        climates = torch.stack(climates)
-        x["climate"] = climates
-
-        return inpt
-
-
 class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
     """
     A PyTorch Dataset for loading precipitation forecast training data for autoregressive forecasts.
@@ -419,6 +405,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             training_data_path: Union[Path, str],
             scaling_factors: Union[Path, str],
             input_time: int = 3,
+            lead_time: Optional[int] = None,
             accumulation_period: int = 3,
             max_steps: int = 24,
             climate: bool = True,
@@ -450,6 +437,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         super().__init__(
             training_data_path=training_data_path,
             input_time=input_time,
+            lead_time=lead_time,
             accumulation_period=accumulation_period,
             max_steps=max_steps,
             climate=climate,
@@ -492,17 +480,24 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         input_indices = []
         output_indices = []
         for ind, sample_time in enumerate(self.input_times):
-            input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
 
+            input_times = [sample_time - np.timedelta64(step, "h") for step in self.input_steps]
             output_times = [
-                sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in np.arange(1, self.max_steps + 1)
+                sample_time + np.timedelta64(t_i * self.lead_time, "h") for t_i in np.arange(1, self.max_steps + 1)
             ]
             output_times = [t_o for t_o in output_times if t_o in self.output_times]
-            valid = all([t_i in self.input_times for t_i in input_times])
+            valid = sample_time in self.input_times and any([t_i in self.input_times for t_i in input_times])
+
             if valid and len(output_times) > 0:
 
-                prev_ind = np.searchsorted(self.input_times, input_times[0])
-                input_indices.append([prev_ind, ind])
+                input_inds = []
+                for input_time in input_times:
+                    if not input_time in self.input_times:
+                        input_inds.append(-1)
+                    else:
+                        input_inds.append(np.searchsorted(self.input_times, input_times[0]))
+                input_inds.append(ind)
+                input_indices.append(input_inds)
 
                 output_inds = []
                 for output_time in output_times:
@@ -524,16 +519,27 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             sample_ind = lower
 
         try:
-            input_files = [self.input_files[ind_in] for ind_in in self.input_indices[sample_ind]]
-            input_times = [self.input_times[ind_in] for ind_in in self.input_indices[sample_ind]]
+            input_time = self.input_steps[0]
+            input_indices = self.input_indices[sample_ind]
+            if self.validation:
+                step_ind = int(sample_ind * self.sampling_rate) % len(self.input_steps)
+                input_indices = [input_indices[step_ind], input_indices[-1]]
+                input_time = self.input_steps[step_ind]
+            else:
+                if 1 < len(self.input_steps):
+                    step_ind = self.rng.integers(len(self.input_steps))
+                    input_indices = [input_indices[step_ind], input_indices[-1]]
+                    input_time = self.input_steps[step_ind]
+
+            input_files = [self.input_files[ind] for ind in input_indices]
+            input_times = [self.input_times[ind] for ind in input_indices]
+
             dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
 
-            static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.input_time, "h")
+            static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.lead_time, "h")
             static_in = [
                 torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
             ]
-
-            input_time = self.input_time
 
             if self.center_meridionally:
                 transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
@@ -544,7 +550,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 "x": transform(torch.stack(dynamic_in, 0)),
                 "static": transform(torch.stack(static_in, 0)),
                 "input_time": torch.tensor(input_time).to(dtype=torch.float32),
-                "lead_time": torch.tensor(input_time).to(dtype=torch.float32),
+                "lead_time": torch.tensor(self.lead_time).to(dtype=torch.float32),
             }
 
             inds = self.output_indices[sample_ind]
@@ -565,7 +571,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
             for step in range(1, self.max_steps + 1):
 
-                output_time += np.timedelta64(self.input_time, "h")
+                output_time += np.timedelta64(self.lead_time, "h")
 
                 if self.climate:
                     climates.append(torch.tensor(load_climatology(output_time, self.data_path)))
