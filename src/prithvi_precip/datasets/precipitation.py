@@ -586,8 +586,13 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                     with xr.load_dataset(self.training_data_path / output_file) as data:
                         LOGGER.debug("Loading precip data from %s.", output_file)
                         precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+
                         if self.reference_data.startswith("era5"):
                             precip_s = 1e3 * precip_s
+
+                        if precip_s.shape[0] == 361:
+                            precip_s = 0.5 * (precip_s[1:] + precip_s[:-1])
+
                         precip.append(precip_s)
                 else:
                     precip.append(torch.nan * torch.zeros((1, 360, 576)))
