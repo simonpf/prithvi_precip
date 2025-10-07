@@ -287,7 +287,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         """
         lower = trunc(ind / self.sampling_rate)
         upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
-        if lower < upper:
+        if lower < upper and not self.validation:
             ind = self.rng.integers(lower, upper)
         else:
             ind = lower
@@ -330,7 +330,11 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 weights = np.ones_like(deltas).astype(np.float32)
             weights /= weights.sum()
 
-            output_ind = self.rng.choice(inds, p=weights)
+
+            if self.validation:
+                output_ind = inds[int(ind * self.sampling_rate) % len(inds)]
+            else:
+                output_ind = self.rng.choice(inds, p=weights)
             output_file = self.output_files[output_ind]
             output_time = self.output_times[output_ind]
 
@@ -518,7 +522,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         """
         lower = trunc(sample_ind / self.sampling_rate)
         upper = min(trunc((sample_ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
-        if lower < upper:
+        if lower < upper and not self.validation:
             sample_ind = self.rng.integers(lower, upper)
         else:
             sample_ind = lower

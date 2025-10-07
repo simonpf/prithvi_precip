@@ -302,7 +302,7 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
         """
         lower = trunc(ind / self.sampling_rate)
         upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
-        if lower < upper:
+        if lower < upper and not self.validation:
             ind = self.rng.integers(lower, upper)
         else:
             ind = lower
@@ -345,7 +345,10 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
                 weights = np.ones_like(deltas).astype(np.float32)
             weights /= weights.sum()
 
-            output_ind = self.rng.choice(inds, p=weights)
+            if self.validation:
+                output_ind = inds[int(ind * self.sampling_rate) % len(inds)]
+            else:
+                output_ind = self.rng.choice(inds, p=weights)
             output_file = self.output_files[output_ind]
             output_time = self.output_times[output_ind]
 
@@ -372,10 +375,6 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
 
                 LOGGER.debug("Loading precip data from %s.", output_file)
                 severe = np.minimum(tornado.numpy() + hail.numpy() + wind.numpy(), 1.0)
-                invalid = np.isnan(severe)
-                severe = torch.tensor(binary_dilation(severe, structure=np.ones((2, 2)))).to(dtype=torch.float32)
-                invalid = binary_dilation(invalid, structure=np.ones((2, 2)))
-                severe[invalid] = torch.nan
 
                 target = {
                     "tornado": tornado,
@@ -383,7 +382,6 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
                     "wind": wind,
                     "severe": severe,
                 }
-                target["surface_precip"] = target["severe"]
 
             coords = x["static"][:2]
 
