@@ -65,6 +65,11 @@ def extract_imerg_precip(
     time = []
 
     lon_bins, lat_bins = get_lon_lat_bins(domain)
+    if np.diff(lat_bins).min() < 0.0:
+        flip = True
+    else:
+        flip = False
+
 
     for rec in recs:
         data = l3b_hhr_3imerg_ms_mrg_07b.open(rec).transpose("time", "latitude", "longitude")
@@ -79,10 +84,14 @@ def extract_imerg_precip(
             lons[valid],
             lats[valid],
             surface_precip[valid],
-            bins=(lon_bins, lat_bins)
+            bins=(lon_bins, np.flip(lat_bins) if flip else lat_bins)
         )[0].T
         precip_fields.append(surface_precip_r)
         time.append(data.time.data[0])
+
+    if flip:
+        precip_fields = np.flip(precip_fields, axis=-2)
+
 
     data = xr.Dataset({
         "latitude": 0.5 * (lat_bins[1:] + lat_bins[:-1]),
