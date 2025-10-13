@@ -70,7 +70,7 @@ class ObservationLoader(Dataset):
     def copy_files(
             self,
             input_times: np.ndarray,
-            input_time: int,
+            input_steps: int,
             local_data: Path,
             validation: bool = False
     ) -> None:
@@ -79,7 +79,7 @@ class ObservationLoader(Dataset):
 
         Args:
             input_times: An array containing the time stamps for which observations are required.
-            input_time: The time difference between input steps in hours.
+            input_steps: The time differences between input steps in hours.
             local_data: The local data path of the machine.
             validation: If 'True' data will be copied to local validation data folder.
         """
@@ -103,10 +103,11 @@ class ObservationLoader(Dataset):
             if path.exists():
                 obs_files.append(path.relative_to(self.observation_path))
 
-            date = to_datetime(time - np.timedelta64(input_time, "h"))
-            path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
-            if path.exists():
-                obs_files.append(path.relative_to(self.observation_path))
+            for step in input_steps:
+                date = to_datetime(time - np.timedelta64(step, "h"))
+                path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
+                if path.exists():
+                    obs_files.append(path.relative_to(self.observation_path))
 
         obs_files = list(set(obs_files))
         # Copy input and output samples.
@@ -491,7 +492,7 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
         if self.local_data:
             self.obs_loader.copy_files(
                 self.input_times,
-                self.input_time,
+                self.input_steps,
                 self.local_data,
                 validation=self.validation
             )
