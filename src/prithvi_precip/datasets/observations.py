@@ -27,6 +27,33 @@ from ..utils import to_datetime
 LOGGER = logging.getLogger(__name__)
 
 
+def untile(tnsr: torch.Tensor) -> torch.Tensor:
+    """
+    Untile tensor.
+
+    Args:
+        tnsr: The tensor to untile.
+    """
+    return torch.permute(tnsr, (2, 3, 0, 4, 1, 5)).flatten(-2, -1).flatten(-3, -2)
+
+
+def tile(tnsr: torch.Tensor, tile_size: Tuple[int, int]) -> torch.Tensor:
+    """
+    Split global tensor into tiles and move tile dimensions to front.
+
+    Args:
+        tnsr: The tensor to tile.
+        tile_size: A tuple specifying the size of the tiles.
+
+    Return:
+        The reshaped and transposed tensor.
+    """
+    TY, TX = tile_size
+    L, C, Y, X = tnsr.shape
+    tnsr = tnsr.reshape(L, C, Y // TY, TY, X // TX, TX)
+    return torch.permute(tnsr, (2, 4, 0, 1, 3, 5))
+
+
 class ObservationLoader(Dataset):
     """
     PyTorch dataset for loading satellite observations as input for
@@ -328,7 +355,9 @@ class ObservationLoader(Dataset):
             self,
             time: np.datetime64,
             offset: Optional[int] = None,
-            randomize: bool = True
+            randomize: bool = True,
+            roll: int = 0,
+            flip: bool = False
     ):
         """
         Load observations for a given time.
@@ -391,7 +420,7 @@ class ObservationLoader(Dataset):
                     observations[row_ind, col_ind, :tiles, 0]  = torch.tensor(obs_n)
 
                     freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]])
-                    freq = -1.0 + 2.0 * (freq - np.log10(self.freq_max)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
+                    freq = -1.0 + 2.0 * (freq - np.log10(self.freq_min)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
                     offs = data[f"offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]
                     offs = np.minimum(offs, 10) / 10
                     pol = torch.nn.functional.one_hot(
@@ -414,8 +443,20 @@ class ObservationLoader(Dataset):
                         path
                     )
 
-        observations = torch.nan_to_num(observations, nan=-3.0)
-        meta_data = torch.nan_to_num(meta_data, nan=-3.0)
+        observations = torch.nan_to_num(observations, nan=-1.5)
+        meta_data = torch.nan_to_num(meta_data, nan=-1.5)
+
+        if (0 < roll) or flip:
+            observations = untile(observations)
+            meta_data = untile(meta_data)
+            observations = torch.roll(observations, roll, (-1))
+            meta_data = torch.roll(meta_data, roll, (-1))
+            if flip:
+                observations = torch.flip(observations, (-2))
+                meta_data = torch.flip(meta_data, (-2))
+            observations = tile(observations, self.tile_size)
+            meta_data = tile(meta_data, self.tile_size)
+
         return observations, meta_data
 
 

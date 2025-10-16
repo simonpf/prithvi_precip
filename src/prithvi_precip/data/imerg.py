@@ -92,7 +92,6 @@ def extract_imerg_precip(
     if flip:
         precip_fields = np.flip(precip_fields, axis=-2)
 
-
     data = xr.Dataset({
         "latitude": 0.5 * (lat_bins[1:] + lat_bins[:-1]),
         "longitude": 0.5 * (lon_bins[1:] + lon_bins[:-1]),

@@ -36,6 +36,7 @@ from .utils import (
 
 LOGGER = logging.getLogger(__name__)
 
+
 WAVELENGTHS = {
     1: 0.6,
     2: 3.9,

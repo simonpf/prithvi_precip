@@ -59,7 +59,7 @@ def plot_tiles(
             end = start + height
             y = np.arange(start, end)
 
-            m = ax.pcolormesh(x, y, tile, cmap=cmap)
+            m = ax.pcolormesh(x, y, tile, cmap=cmap, norm=norm)
 
     if colorbar:
         plt.colorbar(m)

@@ -338,7 +338,6 @@ def extract_observations(
                         output_path.parent.mkdir(parents=True)
 
                     new_data.to_netcdf(output_path, encoding=encoding)
-                    print("WRITING RESULTS :: ", output_path)
 
         swath_ind += 1
 
