@@ -156,6 +156,69 @@ def load_climatology(time: np.datetime64, data_dir: Path) -> np.ndarray:
     data_combined = np.concatenate((data_sfc, data_vert), 0)
     return data_combined
 
+def load_and_interp_climatology(time: np.datetime64, data_dir: Path) -> np.ndarray:
+    """
+    Load climatology form sparse data.
+
+    Args:
+         time: A timestamp defining the time for which to load the input data.
+         data_dir: The root directory containing the Prithvi-WxC training data.
+
+    Return:
+         A numpy array containing the climatology data for the given time.
+    """
+    date = time.astype("datetime64[s]").item()
+    year = date.year
+    doy = (date - datetime(year=year, month=1, day=1)).days + 1
+    day_l = doy // 30 * 30
+    day_r = day_l + 30
+    if day_l == 0:
+        day_l = 1
+    if 360 < day_r:
+        day_r = 1
+
+    doy = min(doy, 365)
+    hod = date.hour
+
+    sfc_file_l = data_dir / "climatology" / f"climate_surface_doy{day_l:03}_hour{hod:02}.nc"
+    sfc_file_r = data_dir / "climatology" / f"climate_surface_doy{day_r:03}_hour{hod:02}.nc"
+    data_sfc_l = []
+    with xr.open_dataset(sfc_file_l) as sfc_data:
+        for var in SURFACE_VARS:
+            data_sfc_l.append(sfc_data[var].data.astype(np.float32))
+    data_sfc_l = np.stack(data_sfc_l)
+    data_sfc_r = []
+    with xr.open_dataset(sfc_file_r) as sfc_data:
+        for var in SURFACE_VARS:
+            data_sfc_r.append(sfc_data[var].data.astype(np.float32))
+    data_sfc_r = np.stack(data_sfc_r)
+    if day_l < day_r:
+        w_r = (doy - day_l) / (day_r - day_l)
+    else:
+        w_r = (doy - day_l) / (365 + day_r - day_l)
+    w_l = 1.0 - w_r
+    data_sfc = w_l * data_sfc_l + w_r * data_sfc_r
+
+    vert_file_l = data_dir / "climatology" / f"climate_vertical_doy{day_l:03}_hour{hod:02}.nc"
+    data_vert_l = []
+    with xr.open_dataset(vert_file_l) as data_vert:
+        for var in VERTICAL_VARS:
+            data_vert_l.append(np.flip(data_vert[var].data.astype(np.float32), 0))
+    data_vert_l = np.stack(data_vert_l, 0)
+    data_vert_l = data_vert_l.reshape(-1, *data_vert_l.shape[2:])
+
+    vert_file_r = data_dir / "climatology" / f"climate_vertical_doy{day_r:03}_hour{hod:02}.nc"
+    data_vert_r = []
+    with xr.open_dataset(vert_file_r) as data_vert:
+        for var in VERTICAL_VARS:
+            data_vert_r.append(np.flip(data_vert[var].data.astype(np.float32), 0))
+    data_vert_r = np.stack(data_vert_r, 0)
+    data_vert_r = data_vert_r.reshape(-1, *data_vert_r.shape[2:])
+    data_vert = w_l * data_vert_l + w_r * data_vert_r
+
+    data_combined = np.concatenate((data_sfc, data_vert), 0)
+    return data_combined
+
 
 def load_static_input(time: np.datetime64, data_dir: Path) -> np.ndarray:
     """

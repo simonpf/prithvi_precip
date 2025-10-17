@@ -20,7 +20,10 @@ import torch
 from torch.utils.data import Dataset
 import xarray as xr
 
-from .precipitation import DirectPrecipForecastDataset
+from .precipitation import (
+    DirectPrecipForecastDataset,
+    AutoregressivePrecipForecastDataset
+)
 from ..utils import to_datetime
 
 
@@ -460,52 +463,13 @@ class ObservationLoader(Dataset):
         return observations, meta_data
 
 
-class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
-    """
-    A PyTorch Dataset for loading precipitation forecast training data with global satellite
-    observations.
-    """
+class ObsDatasetBase():
     def __init__(
             self,
-            training_data_path: Union[Path, str],
-            input_time: int = 3,
-            accumulation_period: int = 3,
-            max_steps: int = 24,
-            climate: bool = True,
-            sampling_rate: float = 1.0,
-            reference_data: str = "imerg",
-            center_meridionally: bool = True,
-            validation: bool = False,
-            local_data: Optional[Path] = None,
-            weighted_sampling: bool = False,
-            source: str = "merra2",
+            training_data_path: Path,
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
     ):
-        """
-        Args:
-            training_data_path: A path pointing to the directory containing the training data.
-            input_time: The time step between consecutive model inputs.
-            max_steps: The maximum number of steps to forecast.
-            sentinel: The value to use to represent missing values.
-        Args:
-            training_data_path: The directory containing the dynamic input data.
-            input_time: The time difference between input samples.
-            accumulation_period: The precipitation accumulation period.
-            max_steps: The maximum number of timesteps to forecast precipitation.
-            climate: Whether to include climatology data in the input.
-            sampling_rate: Sub- or super-sample dataset.
-            reference_data: Name of the reference data source.
-            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
-                of the input data by one. If False, will use negative paddgin.
-            validation: Flat indicating whether the dataset is used to load validation or training data.
-            local_data: An optional path pointing to a location to which to copy the training data. This should
-                typically be node-local memory that can be accessed rapidly.
-            weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
-            source: The source of the input data: 'merra2' or 'geos'
-            n_tiles: The number of global observations tiles.
-            tile_size: The size of each tile.
-        """
         training_data_path = Path(training_data_path)
         self.obs_loader = ObservationLoader(
             training_data_path / "obs",
@@ -513,22 +477,6 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             tile_size=tile_size,
             observation_layers=32
         )
-        super().__init__(
-            training_data_path=training_data_path,
-            input_time=input_time,
-            accumulation_period=accumulation_period,
-            max_steps=max_steps,
-            climate=climate,
-            sampling_rate=1.0,
-            reference_data=reference_data,
-            center_meridionally=center_meridionally,
-            validation=validation,
-            local_data=local_data,
-            weighted_sampling=weighted_sampling,
-            source=source,
-        )
-        self._sampling_rate = sampling_rate
-        self.rng = np.random.default_rng(seed=42)
 
         if self.local_data:
             self.obs_loader.copy_files(
@@ -539,22 +487,19 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
             )
             self.obs_loader.observation_path = self.training_data_path / "obs"
 
-    def __len__(self):
-        return trunc(len(self.input_indices) * self._sampling_rate)
-
 
     def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Load and return a single data point from the dataset.
         """
-        lower = trunc(ind / self._sampling_rate)
-        upper = min(trunc((ind + 1) / self._sampling_rate), len(self.input_indices) - 1)
+        lower = trunc(ind / self.sampling_rate)
+        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
         if lower < upper:
             ind = self.rng.integers(lower, upper)
         else:
             ind = lower
 
-        x, y = super().__getitem__(ind)
+        x, y = super().load_data(ind, roll=0, flip=False)
         input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
         obs = []
         meta = []
@@ -573,3 +518,123 @@ class DirectPrecipForecastWithObsDataset(DirectPrecipForecastDataset):
 
         return x, y
 
+
+class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDataset):
+    """
+    A PyTorch Dataset for loading precipitation forecast training data with global satellite
+    observations.
+    """
+    def __init__(
+            self,
+            training_data_path: Union[Path, str],
+            input_time: int = 3,
+            accumulation_period: int = 3,
+            max_steps: int = 24,
+            climate: bool = True,
+            sampling_rate: float = 1.0,
+            reference_data: str = "imerg",
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None,
+            source: str = "merra2",
+            n_tiles: Tuple[int, int] = (12, 18),
+            tile_size: Tuple[int, int] = (30, 32),
+    ):
+        """
+        Args:
+            training_data_path: The directory containing the dynamic input data.
+            input_time: The time difference between input samples.
+            accumulation_period: The precipitation accumulation period.
+            max_steps: The maximum number of timesteps to forecast precipitation.
+            climate: Whether to include climatology data in the input.
+            sampling_rate: Sub- or super-sample dataset.
+            reference_data: Name of the reference data source.
+            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
+                of the input data by one. If False, will use negative paddgin.
+            validation: Flat indicating whether the dataset is used to load validation or training data.
+            local_data: An optional path pointing to a location to which to copy the training data. This should
+                typically be node-local memory that can be accessed rapidly.
+            source: The source of the input data: 'merra2' or 'geos'
+            n_tiles: The number of global observations tiles.
+            tile_size: The size of each tile.
+        """
+        DirectPrecipForecastDataset.__init__(
+            self,
+            training_data_path=training_data_path,
+            input_time=input_time,
+            accumulation_period=accumulation_period,
+            max_steps=max_steps,
+            climate=climate,
+            sampling_rate=1.0,
+            reference_data=reference_data,
+            center_meridionally=center_meridionally,
+            validation=validation,
+            local_data=local_data,
+            source=source,
+        )
+        ObsDatasetBase.__init__(self, training_data_path, n_tiles, tile_size)
+
+
+class AutoregressivePrecipForecastWithObsDataset(ObsDatasetBase, AutoregressivePrecipForecastDataset):
+    """
+    A PyTorch Dataset for loading precipitation forecast training data with global satellite
+    observations.
+    """
+    def __init__(
+            self,
+            training_data_path: Union[Path, str],
+            scaling_factors: Union[Path, str],
+            input_time: int = 3,
+            lead_time: Optional[int] = None,
+            accumulation_period: int = 3,
+            max_steps: int = 24,
+            climate: bool = True,
+            sampling_rate: float = 1.0,
+            reference_data: str = "imerg",
+            center_meridionally: bool = True,
+            validation: bool = False,
+            local_data: Optional[Path] = None,
+            augment: bool = False,
+            source: str = "merra2",
+            n_tiles: Tuple[int, int] = (12, 18),
+            tile_size: Tuple[int, int] = (30, 32),
+    ):
+        """
+        Args:
+            training_data_path: The directory containing the dynamic input data.
+            scaling_factors: Directory containing the scaling factors for the Prithvi-WxC model.
+            input_time: The time difference between input samples.
+            lead_time: The rollout timestep.
+            accumulation_period: The precipitation accumulation period.
+            max_steps: The maximum number of timesteps to forecast precipitation.
+            climate: Whether to include climatology data in the input.
+            sampling_rate: Sub- or super-sample dataset.
+            reference_data: Name of the reference data source.
+            center_meridionally: If True, will use mid-point averaging to reduce the latitude dimension
+                of the input data by one. If False, will use negative paddgin.
+            validation: Flat indicating whether the dataset is used to load validation or training data.
+            local_data: An optional path pointing to a location to which to copy the training data. This should
+                typically be node-local memory that can be accessed rapidly.
+            augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
+            source: Name of the input dataset.
+            n_tiles: The number of global observations tiles.
+            tile_size: The size of each tile.
+        """
+        AutoregressivePrecipForecastDataset.__init__(
+            self,
+            training_data_path=training_data_path,
+            scaling_factors=scaling_factors,
+            input_time=input_time,
+            lead_time=lead_time,
+            accumulation_period=accumulation_period,
+            max_steps=max_steps,
+            climate=climate,
+            sampling_rate=sampling_rate,
+            reference_data=reference_data,
+            center_meridionally=center_meridionally,
+            validation=validation,
+            local_data=local_data,
+            augment=augment,
+            source=source,
+        )
+        ObsDatasetBase.__init__(self, training_data_path, n_tiles, tile_size)

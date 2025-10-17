@@ -26,6 +26,7 @@ from ..data.merra2 import SURFACE_VARS, VERTICAL_VARS, LEVELS
 from ..utils import (
     find_input_files,
     load_climatology,
+    load_and_interp_climatology,
     load_dynamic_input,
     load_static_input,
     to_datetime64
@@ -33,6 +34,46 @@ from ..utils import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _transform_data(
+        inpt: Dict[str, torch.Tensor],
+        targets: torch.Tensor,
+        roll: int,
+        flip: bool
+) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    """
+    Transform data by applying zonal roll and meridional flipping.
+
+    Args:
+        inpt: The dictionary containing the input data.
+        targets: A single tensor containing the target or a dictionary containing the targets
+        roll: The number of pixels by which to roll the data zonally.
+        flip: Whether or not to flip the data meridionally.
+
+    Return:
+        A tuple ``(inpt, target)`` containing the transformed input data.
+    """
+    coords = inpt["static"][:2]
+    if 0 < roll:
+        for var in ["x", "static", "climate"]:
+            inpt[var] = torch.roll(inpt[var], roll, dims=-1)
+        if isinstance(targets, torch.Tensor):
+            targets = torch.roll(targets, roll, dims=-1)
+        else:
+            targets = {name: torch.roll(tnsr, roll, dims=-1) for name, tnsr in targets.items()}
+
+        inpt["static"][:2] = coords
+
+    if flip:
+        for var in ["x", "static", "climate"]:
+            inpt[var] = torch.flip(inpt[var], dims=(-2,))
+        if isinstance(targets, torch.Tensor):
+            targets = torch.flip(targets, dims=(-2,))
+        else:
+            targets = {name: torch.flip(tnsr, dims=(-2,)) for name, tnsr in targets.items()}
+        inpt["static"][:2] = coords
+    return inpt, targets
 
 
 class DirectPrecipForecastDataset(MERRAInputData):
@@ -367,7 +408,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         x["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
 
         if self.climate:
-            climate = load_climatology(output_time, self.data_path)
+            climate = load_and_interp_climatology(output_time, self.data_path)
             x["climate"] = transform(torch.tensor(climate))
 
         with xr.load_dataset(self.training_data_path / output_file) as data:
@@ -376,19 +417,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             if self.reference_data.startswith("era5"):
                 precip = 1e3 * precip
 
-        coords = x["static"][:2]
-        if 0 < roll:
-            for var in ["x", "static", "climate"]:
-                x[var] = torch.roll(x[var], roll, dims=-1)
-            precip = torch.roll(precip, roll, dims=-1)
-            x["static"][:2] = coords
-
-        if flip:
-            for var in ["x", "static", "climate"]:
-                x[var] = torch.flip(x[var], dims=(-2,))
-            precip = torch.flip(precip, dims=(-2,))
-            x["static"][:2] = coords
-
+        x, precip = _transform_data(x, precip, roll, flip)
         return x, precip
 
 
@@ -450,6 +479,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             training_data_path: The directory containing the dynamic input data.
             scaling_factors: Directory containing the scaling factors for the Prithvi-WxC model.
             input_time: The time difference between input samples.
+            lead_time: The rollout timestep.
             accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
             climate: Whether to include climatology data in the input.
@@ -461,6 +491,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             local_data: An optional path pointing to a location to which to copy the training data. This should
                 typically be node-local memory that can be accessed rapidly.
             augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
+            source: Name of the input dataset.
         """
         super().__init__(
             training_data_path=training_data_path,
@@ -535,118 +566,115 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
         return np.array(input_indices), np.array(output_indices)
 
-    def __getitem__(self, sample_ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Load and return a single data point from the dataset.
-        """
-        lower = trunc(sample_ind / self.sampling_rate)
-        upper = min(trunc((sample_ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
-        if lower < upper and not self.validation:
-            sample_ind = self.rng.integers(lower, upper)
-        else:
-            sample_ind = lower
 
-        try:
-            input_time = self.input_steps[0]
-            input_indices = self.input_indices[sample_ind]
-            if self.validation:
-                step_ind = int(sample_ind * self.sampling_rate) % len(self.input_steps)
+    def load_data(
+            self,
+            sample_ind: int,
+            roll: int,
+            flip: bool
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        """
+        Load training data for a specific sample.
+
+        Args:
+            sample_ind: The index of the sample.
+            roll: Roll data by that many pixels in zonal direction.
+            flip: Flip data merdionally.
+
+        Return:
+            A tuple containing the input and target data.
+        """
+        input_time = self.input_steps[0]
+        input_indices = self.input_indices[sample_ind]
+        if self.validation:
+            step_ind = int(sample_ind * self.sampling_rate) % len(self.input_steps)
+            input_indices = [input_indices[step_ind], input_indices[-1]]
+            input_time = self.input_steps[step_ind]
+        else:
+            if 1 < len(self.input_steps):
+                step_ind = self.rng.integers(len(self.input_steps))
                 input_indices = [input_indices[step_ind], input_indices[-1]]
                 input_time = self.input_steps[step_ind]
+
+        input_files = [self.input_files[ind] for ind in input_indices]
+        input_times = [self.input_times[ind] for ind in input_indices]
+
+        dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
+
+        static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.lead_time, "h")
+        static_in = [
+            torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
+        ]
+
+        if self.center_meridionally:
+            transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
+        else:
+            transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
+
+        x = {
+            "x": transform(torch.stack(dynamic_in, 0)),
+            "static": transform(torch.stack(static_in, 0)),
+            "input_time": torch.tensor(input_time).to(dtype=torch.float32),
+            "lead_time": torch.tensor(self.lead_time).to(dtype=torch.float32),
+        }
+
+        inds = self.output_indices[sample_ind]
+
+        precip = []
+        climates = []
+        ys = []
+
+        available_times = [
+            self.output_times[out_ind] for out_ind in self.output_indices[sample_ind]
+            if 0 <= out_ind
+        ]
+        output_indices = [
+            out_ind for out_ind in self.output_indices[sample_ind] if 0 <= out_ind
+        ]
+
+        output_time = input_times[-1]
+
+        for step in range(1, self.max_steps + 1):
+
+            output_time += np.timedelta64(self.lead_time, "h")
+
+            if self.climate:
+                climates.append(torch.tensor(load_and_interp_climatology(output_time, self.data_path)))
+
+            if output_time in available_times:
+                output_ind = available_times.index(output_time)
+                output_file = self.output_files[output_indices[output_ind]]
+                with xr.load_dataset(self.training_data_path / output_file) as data:
+                    LOGGER.debug("Loading precip data from %s.", output_file)
+                    precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+
+                    if self.reference_data.startswith("era5"):
+                        precip_s = 1e3 * precip_s
+
+                    if precip_s.shape[0] == 361:
+                        precip_s = 0.5 * (precip_s[1:] + precip_s[:-1])
+
+                    precip.append(precip_s)
             else:
-                if 1 < len(self.input_steps):
-                    step_ind = self.rng.integers(len(self.input_steps))
-                    input_indices = [input_indices[step_ind], input_indices[-1]]
-                    input_time = self.input_steps[step_ind]
+                precip.append(torch.nan * torch.zeros((1, 360, 576)))
 
-            input_files = [self.input_files[ind] for ind in input_indices]
-            input_times = [self.input_times[ind] for ind in input_indices]
 
-            dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
-
-            static_times = input_times[-1] + np.arange(0, self.max_steps) * np.timedelta64(self.lead_time, "h")
-            static_in = [
-                torch.tensor(load_static_input(static_time, self.data_path)) for static_time in static_times
-            ]
-
-            if self.center_meridionally:
-                transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
-            else:
-                transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
-
-            x = {
-                "x": transform(torch.stack(dynamic_in, 0)),
-                "static": transform(torch.stack(static_in, 0)),
-                "input_time": torch.tensor(input_time).to(dtype=torch.float32),
-                "lead_time": torch.tensor(self.lead_time).to(dtype=torch.float32),
-            }
-
-            inds = self.output_indices[sample_ind]
-
-            precip = []
-            climates = []
-            ys = []
-
-            available_times = [
-                self.output_times[out_ind] for out_ind in self.output_indices[sample_ind]
-                if 0 <= out_ind
-            ]
-            output_indices = [
-                out_ind for out_ind in self.output_indices[sample_ind] if 0 <= out_ind
-            ]
-
-            output_time = input_times[-1]
-
-            for step in range(1, self.max_steps + 1):
-
-                output_time += np.timedelta64(self.lead_time, "h")
-
+            if output_time in self.input_times:
+                ind = np.searchsorted(self.input_times, output_time)
+                y = load_dynamic_input(self.training_data_path / self.input_files[ind])
                 if self.climate:
-                    climates.append(torch.tensor(load_climatology(output_time, self.data_path)))
+                    y = (y - climates[-1])
+                y = y / self.output_sig
+                ys.append(transform(y))
+            else:
+                ys.append(torch.nan * torch.zeros_like(climates[-1]))
 
-                if output_time in available_times:
-                    output_ind = available_times.index(output_time)
-                    output_file = self.output_files[output_indices[output_ind]]
-                    with xr.load_dataset(self.training_data_path / output_file) as data:
-                        LOGGER.debug("Loading precip data from %s.", output_file)
-                        precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+        if 0 < len(climates):
+            x["climate"] = transform(torch.stack(climates, 0))
 
-                        if self.reference_data.startswith("era5"):
-                            precip_s = 1e3 * precip_s
-
-                        if precip_s.shape[0] == 361:
-                            precip_s = 0.5 * (precip_s[1:] + precip_s[:-1])
-
-                        precip.append(precip_s)
-                else:
-                    precip.append(torch.nan * torch.zeros((1, 360, 576)))
-
-
-                if output_time in self.input_times:
-                    ind = np.searchsorted(self.input_times, output_time)
-                    y = load_dynamic_input(self.training_data_path / self.input_files[ind])
-                    if self.climate:
-                        y = (y - climates[-1])
-                    y = y / self.output_sig
-                    ys.append(transform(y))
-                else:
-                    ys.append(torch.nan * torch.zeros_like(climates[-1]))
-
-            if 0 < len(climates):
-                x["climate"] = transform(torch.stack(climates, 0))
-
-            targets = {
-                "surface_precip": precip,
-                "y": ys
-            }
-            return x, targets
-
-        except Exception as exc:
-            raise exc
-            LOGGER.exception(
-                "Encountered an error when load training sample %s. Falling back to another "
-                " randomly-chosen sample.",
-                sample_ind
-            )
-            new_ind = np.random.randint(0, len(self))
-            return self[new_ind]
+        targets = {
+            "surface_precip": precip,
+            "y": ys
+        }
+        #x, targets = _transform_data(x, targets, roll, flip)
+        return x, targets
