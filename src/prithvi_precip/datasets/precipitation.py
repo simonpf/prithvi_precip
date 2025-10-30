@@ -363,7 +363,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         input_time = self.input_steps[0]
         input_indices = self.input_indices[index]
         if self.validation:
-            step_ind = int(ind * self.sampling_rate) % len(self.input_steps)
+            step_ind = int(index * self.sampling_rate) % len(self.input_steps)
             input_indices = [input_indices[step_ind], input_indices[-1]]
             input_time = self.input_steps[step_ind]
         else:
