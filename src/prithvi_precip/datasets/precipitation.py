@@ -416,6 +416,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
             precip = torch.tensor(data.surface_precip.data.astype(np.float32))
             if self.reference_data.startswith("era5"):
                 precip = 1e3 * precip
+            if precip.shape[0] == 361:
+                precip = 0.5 * (precip[1:] + precip[:-1])
 
         x, precip = _transform_data(x, precip, roll, flip)
         return x, precip
