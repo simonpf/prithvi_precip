@@ -398,7 +398,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         inds = inds[0 <= inds]
 
         if self.validation:
-            output_ind = inds[int(ind * self.sampling_rate) % len(inds)]
+            output_ind = inds[int(index * self.sampling_rate) % len(inds)]
         else:
             output_ind = self.rng.choice(inds)
         output_file = self.output_files[output_ind]
