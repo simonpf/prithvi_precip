@@ -40,7 +40,9 @@ def _transform_data(
         inpt: Dict[str, torch.Tensor],
         targets: torch.Tensor,
         roll: int,
-        flip: bool
+        flip_v: bool,
+        flip_h: bool,
+        scale: float = 1.0
 ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
     """
     Transform data by applying zonal roll and meridional flipping.
@@ -49,7 +51,9 @@ def _transform_data(
         inpt: The dictionary containing the input data.
         targets: A single tensor containing the target or a dictionary containing the targets
         roll: The number of pixels by which to roll the data zonally.
-        flip: Whether or not to flip the data meridionally.
+        flip_v: Whether or not to flip the data meridionally.
+        flip_h: Whether or not to flip the data zonally.
+        scale: Apply scaling to data
 
     Return:
         A tuple ``(inpt, target)`` containing the transformed input data.
@@ -65,14 +69,40 @@ def _transform_data(
 
         inpt["static"][:2] = coords
 
-    if flip:
+    if flip_v:
         for var in ["x", "static", "climate"]:
             inpt[var] = torch.flip(inpt[var], dims=(-2,))
+        for var in ["x", "climate"]:
+            inpt[var][..., 18, :, :] *= -1
+            inpt[var][..., -14:, :, :] *= -1
         if isinstance(targets, torch.Tensor):
             targets = torch.flip(targets, dims=(-2,))
         else:
             targets = {name: torch.flip(tnsr, dims=(-2,)) for name, tnsr in targets.items()}
         inpt["static"][:2] = coords
+
+    if flip_h:
+        for var in ["x", "static", "climate"]:
+            inpt[var] = torch.flip(inpt[var], dims=(-1,))
+        for var in ["x", "climate"]:
+            inpt[var][..., 17, :, :] *= -1
+            inpt[var][..., -28:-14, :, :] *= -1
+        if isinstance(targets, torch.Tensor):
+            targets = torch.flip(targets, dims=(-1,))
+        else:
+            targets = {name: torch.flip(tnsr, dims=(-1,)) for name, tnsr in targets.items()}
+        inpt["static"][:2] = coords
+
+    if scale != 1.0:
+        from torchvision.transforms.v2.functional import affine
+        for var in ["x", "static", "climate"]:
+            inpt[var] = affine(inpt[var], angle=0, translate=[0, 0], shear=0, scale=scale)
+        if isinstance(targets, torch.Tensor):
+            targets = affine(targets[None], angle=0, translate=[0, 0], shear=0, scale=scale)[0]
+        else:
+            targets = {name: affine(tnsr[None], angle=0, translate=[0, 0], shear=0, scale=scale)[0] for name, tnsr in targets.items()}
+        inpt["static"][:2] = coords
+
     return inpt, targets
 
 
@@ -350,7 +380,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
             self,
             index: int,
             roll: int,
-            flip: bool
+            flip_v: bool,
+            flip_h: bool,
+            scale: float = 1.0
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Load input and target data.
@@ -358,7 +390,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
         Args:
             The index of the sample.
             roll: The number of pixels by which to roll latitudes.
-            flip: Whether or not to flip the inputs meridionally.
+            flip_v: Whether to flip the data along the meridional direction.
+            flip_h: Whether to flip the data along the zonal direction.
+            scale: Optional scaling to apply to the data.
         """
         input_time = self.input_steps[0]
         input_indices = self.input_indices[index]
@@ -419,7 +453,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             if precip.shape[0] == 361:
                 precip = 0.5 * (precip[1:] + precip[:-1])
 
-        x, precip = _transform_data(x, precip, roll, flip)
+        x, precip = _transform_data(x, precip, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
         return x, precip
 
 
@@ -436,13 +470,15 @@ class DirectPrecipForecastDataset(MERRAInputData):
 
         try:
             if self.validation:
-                return self.load_data(ind, 0, False)
+                return self.load_data(ind, 0, flip_v=False, flip_h=False, scale=1.0)
             roll = 0
-            flip = False
+            flip_v = False
             if self.augment:
                 roll = self.rng.integers(0, 576)
-                flip = 0.5 < self.rng.random()
-            return self.load_data(ind, roll, flip)
+                flip_v = 0.5 < self.rng.random()
+                flip_h = 0.5 < self.rng.random()
+                scale = self.rng.uniform(1.0, 1.2)
+            return self.load_data(ind, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
 
         except Exception as exc:
             raise exc
