@@ -473,6 +473,8 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 return self.load_data(ind, 0, flip_v=False, flip_h=False, scale=1.0)
             roll = 0
             flip_v = False
+            flip_h = False
+            scale = 1.0
             if self.augment:
                 roll = self.rng.integers(0, 576)
                 flip_v = 0.5 < self.rng.random()
