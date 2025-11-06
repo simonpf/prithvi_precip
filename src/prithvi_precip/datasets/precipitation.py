@@ -390,9 +390,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
         Args:
             The index of the sample.
             roll: The number of pixels by which to roll latitudes.
-            flip_v: Whether to flip the data along the meridional direction.
-            flip_h: Whether to flip the data along the zonal direction.
-            scale: Optional scaling to apply to the data.
+            flip_v: Whether or not to flip the data meridionally.
+            flip_h: Whether or not to flip the data zonally.
+            scale: Apply scaling to data
         """
         input_time = self.input_steps[0]
         input_indices = self.input_indices[index]
@@ -609,25 +609,29 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
 
     def load_data(
             self,
-            sample_ind: int,
+            index: int,
             roll: int,
-            flip: bool
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+            flip_v: bool,
+            flip_h: bool,
+            scale: float = 1.0
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Load training data for a specific sample.
 
         Args:
-            sample_ind: The index of the sample.
+            index: The index of the sample.
             roll: Roll data by that many pixels in zonal direction.
-            flip: Flip data merdionally.
+            flip_v: bool,
+            flip_h: bool,
+            scale: float = 1.0
 
         Return:
             A tuple containing the input and target data.
         """
         input_time = self.input_steps[0]
-        input_indices = self.input_indices[sample_ind]
+        input_indices = self.input_indices[index]
         if self.validation:
-            step_ind = int(sample_ind * self.sampling_rate) % len(self.input_steps)
+            step_ind = int(index * self.sampling_rate) % len(self.input_steps)
             input_indices = [input_indices[step_ind], input_indices[-1]]
             input_time = self.input_steps[step_ind]
         else:
@@ -658,18 +662,18 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             "lead_time": torch.tensor(self.lead_time).to(dtype=torch.float32),
         }
 
-        inds = self.output_indices[sample_ind]
+        inds = self.output_indices[index]
 
         precip = []
         climates = []
         ys = []
 
         available_times = [
-            self.output_times[out_ind] for out_ind in self.output_indices[sample_ind]
+            self.output_times[out_ind] for out_ind in self.output_indices[index]
             if 0 <= out_ind
         ]
         output_indices = [
-            out_ind for out_ind in self.output_indices[sample_ind] if 0 <= out_ind
+            out_ind for out_ind in self.output_indices[index] if 0 <= out_ind
         ]
 
         output_time = input_times[-1]
