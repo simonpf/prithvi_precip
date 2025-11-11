@@ -119,6 +119,77 @@ def download_dynamic(
         data_t.to_netcdf(output_path / output_file, encoding=encoding)
 
 
+def download_precip(
+        year: int,
+        month: int,
+        day: int,
+        output_path: Path
+) -> None:
+    """
+    Download GEOS precipitation analysis for a date given by year, month, and day.
+
+    Args:
+        year: The year
+        day: The day
+        output_path: A path object pointing to the directory to which to download the data.
+    """
+    start_time = datetime(year, month, day)
+    time_range = TimeRange(start_time, start_time + timedelta(hours=23, minutes=59))
+    recs = tavg1_2d_flx_nx.get(time_range)
+
+    start_time = to_datetime64(datetime(year, month, day))
+    end_time = start_time + np.timedelta64(1, "D")
+    time_steps = np.arange(start_time, end_time, np.timedelta64(3, "h"))
+
+    vars_req = ["PRECTOT"]
+
+    all_data = []
+    data_combined = []
+    for rec in recs:
+        with xr.open_dataset(rec.local_path) as data:
+            vars = [
+                var for var in vars_req if var in data.variables
+            ]
+            data = data[vars + ["time"]]
+            data_combined.append(data.load())
+    data = xr.concat(data_combined, "time").sortby("time")
+
+    if (data.time.data[0] - data.time.data[0].astype("datetime64[h]")) > 0:
+        for var in data:
+            data[var].data[1:] = 0.5 * (data[var].data[1:] + data[var].data[:-1])
+        new_time = data.time.data - 0.5 * (data.time.data[1] -  data.time.data[0])
+        data = data.assign_coords(time=new_time)
+
+    times = list(data.time.data)
+    time_steps = [step for step in time_steps if step in times]
+    inds = [times.index(t_s) for t_s in time_steps]
+    data_t = data[{"time": inds}]
+
+    all_data.append(data_t)
+
+
+    data = xr.merge(all_data, compat="override")
+    data = data.rename(
+        lat="latitude",
+        lon="longitude"
+    )
+    data = data.coarsen({"longitude": 2}).mean()
+    data_n = data[{"latitude": 720}]
+    data = data[{"latitude": slice(0, -1)}].coarsen({"latitude": 2}).mean()
+    data = xr.concat((data, data_n), "latitude")
+
+    output_path = Path(output_path) / "geos_precip" / f"{year:04}/{month:02}/{day:02}"
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    encoding = {name: {"zlib": True} for name in data}
+
+    for time_ind in range(data.time.size):
+        data_t = data[{"time": time_ind}]
+        date = to_datetime(data_t.time.data)
+        output_file = date.strftime("geos_precip_%Y%m%d%H%M%S.nc")
+        data_t.to_netcdf(output_path / output_file, encoding=encoding)
+
+
 
 def download_geos_forecast(
         init_time: np.datetime64,
@@ -266,12 +337,12 @@ def extract_geos_data(
 
 
     if n_processes > 1:
-        LOGGER.info(f"[bold blue]Using {n_processes} processes for downloading data.[/bold blue]")
+        LOGGER.info(f"Using {n_processes} processes for downloading data.")
         tasks = [(year, month, d, output_path) for d in days]
 
         with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
             task_id = progress.add_task("Extracting data:", total=len(tasks))
-            future_to_task = {executor.submit(geos.download_dynamic, *task): task for task in tasks}
+            future_to_task = {executor.submit(download_dynamic, *task): task for task in tasks}
             for future in as_completed(future_to_task):
                 task = future_to_task[future]
                 try:
@@ -286,6 +357,62 @@ def extract_geos_data(
             for d in days:
                 try:
                     download_dynamic(year, month, d, output_path)
+                except Exception as e:
+                    LOGGER.exception(f"Error processing day {d}: {e}")
+                finally:
+                    progress.update(task_id, advance=1)
+
+
+@click.argument('year', type=int)
+@click.argument('month', type=int)
+@click.argument('days', nargs=-1, type=int, required=False)
+@click.argument('output_path', type=click.Path(writable=True))
+@click.option('--n_processes', default=1, type=int, help="Number of processes to use for downloading data.")
+def extract_geos_precip_data(
+        year: int,
+        month: int,
+        days: List[int],
+        output_path: Path,
+        n_processes: int = 1
+) -> None:
+    """
+    Extract data for a given YEAR, MONTH, and optional DAY, and write output to to OUTPUT_PATH.
+
+    YEAR and MONTH are required. DAY is optional and defaults to extracting data for
+    all days of the month.
+    """
+    if days:
+        LOGGER.info(f"Extracting data for {year}-{month:02d} on days {', '.join(map(str, days))} to {output_path}.")
+    else:
+        LOGGER.info(f"Extracting data for all days in {year}-{month:02d} to {output_path}.")
+
+
+    if len(days) == 0:
+        _, n_days = monthrange(year, month)
+        days = list(range(1, n_days + 1))
+
+
+    if n_processes > 1:
+        LOGGER.info(f"Using {n_processes} processes for downloading data.")
+        tasks = [(year, month, d, output_path) for d in days]
+
+        with ProcessPoolExecutor(max_workers=n_processes) as executor, Progress() as progress:
+            task_id = progress.add_task("Extracting data:", total=len(tasks))
+            future_to_task = {executor.submit(download_precip, *task): task for task in tasks}
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    LOGGER.exception(f"Task {task} failed with error: {e}")
+                finally:
+                    progress.update(task_id, advance=1)
+    else:
+        with Progress() as progress:
+            task_id = progress.add_task("Extracting data:", total=len(days))
+            for d in days:
+                try:
+                    download_precip(year, month, d, output_path)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:
