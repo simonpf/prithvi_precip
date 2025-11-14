@@ -50,12 +50,12 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             max_steps: int = 24,
             climate: bool = True,
             sampling_rate: float = 1.0,
-            reference_data: str = "imerg",
+            reference_data: str = "severe_weather",
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
             augment: bool = False,
-            source: str = "severe_weather"
+            source: str = "merra2"
     ):
         """
         Args:
