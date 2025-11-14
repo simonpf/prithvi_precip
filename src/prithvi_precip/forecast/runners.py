@@ -13,6 +13,28 @@ from torch import nn
 from tqdm import tqdm
 import xarray as xr
 
+from pytorch_retrieve.tensors import QuantileTensor, ProbabilityTensor, ClassificationTensor, DetectionTensor
+
+
+def get_prediction(tnsr: torch.Tensor) -> torch.Tensor:
+    """
+    Function to calculate scalar output values from probabilistic predictions.
+
+    Args:
+        tnsr: A tensor containing a normal tensor or and output tensor from the pytorch_retrieve package.
+
+    Return:
+        The output tensor converted to the most commonly used scalar prediction.
+
+    """
+    if isinstance(tnsr, (QuantileTensor)):
+        return tnsr.expected_value()
+    if isinstance(tnsr, DetectionTensor):
+        return tnsr.probability()
+    if isinstance(tnsr, ClassificationTensor):
+        return tnsr.most_likely_class()
+    return tnsr
+
 
 def post_process_results(inpt: Dict[str, torch.Tensor], results: Dict[str, torch.Tensor]) -> xr.Dataset:
     """
@@ -38,10 +60,10 @@ def post_process_results(inpt: Dict[str, torch.Tensor], results: Dict[str, torch
 
     for key, tnsr in results.items():
         if isinstance(tnsr, list):
-            res = [tensor.expected_value().float().cpu().numpy()[:, 0] for tensor in tnsr]
+            res = [get_prediction(tensor).float().cpu().numpy()[:, 0] for tensor in tnsr]
             dataset[key] = (("batch", "step", "latitude", "longitude"), np.stack(res, axis=1))
         else:
-            res = tnsr.expected_value().float().cpu().numpy()[:, 0]
+            res = get_prediction(tnsr).float().cpu().numpy()[:, 0]
             dataset[key] = (("batch", "latitude", "longitude"), res)
         dataset[key].encoding = {"dtype": np.float32, "zlib": True}
 
