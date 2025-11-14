@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import shutil
 from time import sleep
-from typing import Dict, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple
 
 import numpy as np
 from scipy.ndimage import binary_dilation
@@ -24,9 +24,10 @@ import xarray as xr
 from PrithviWxC.dataloaders.merra2 import output_scalers
 
 from .merra2 import MERRAInputData
+from .precipitation import DirectPrecipForecastDataset, _transform_data
 from ..utils import (
     find_input_files,
-    load_climatology,
+    load_and_interp_climatology,
     load_dynamic_input,
     load_static_input,
     to_datetime64
@@ -36,28 +37,32 @@ from ..utils import (
 LOGGER = logging.getLogger(__name__)
 
 
-class DirectSevereWeatherForecastDataset(MERRAInputData):
+class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
     """
-    A PyTorch Dataset for loading precipitation forecast training data for direct forecasts without
-    unrolling.
+    A PyTorch Dataset for loading precipitation and severe weahter data for forecasts without unrolling.
     """
     def __init__(
             self,
             training_data_path: Union[Path, str],
-            input_time: int = 24,
-            max_steps: int = 8,
+            input_time: Union[int, List[int]] = 3,
+            lead_time: int = 3,
+            accumulation_period: int = 3,
+            max_steps: int = 24,
             climate: bool = True,
             sampling_rate: float = 1.0,
+            reference_data: str = "imerg",
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
-            weighted_sampling: bool = False,
-            source: str = "merra2"
+            augment: bool = False,
+            source: str = "severe_weather"
     ):
         """
         Args:
             training_data_path: The directory containing the dynamic input data.
-            input_time: The time difference between input samples.
+            input_time: A single int or a list of ints specifying the time different between the two
+                input timesteps.
+            lead_time: The lead time step.
             accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
             climate: Whether to include climatology data in the input.
@@ -68,23 +73,36 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
             validation: Flat indicating whether the dataset is used to load validation or training data.
             local_data: An optional path pointing to a location to which to copy the training data. This should
                 typically be node-local memory that can be accessed rapidly.
-            weighted_sampling: Whether or not to weigh longer-range forecasts inverserly to the lead time.
+            augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
             source: The source of the input data: 'merra2' or 'geos'
         """
         self.training_data_path = Path(training_data_path)
         self.data_path = self.training_data_path.parent
-        self.input_time = input_time
-        self.accumulation_period = 24
+        if not isinstance(input_time, list):
+            self.input_steps = [input_time]
+        else:
+            self.input_steps = input_time
+
+        if lead_time is None:
+            lead_time = self.input_steps[0]
+            LOGGER.info(
+                "No explicit lead time provided. Falling back to input step %s h.",
+                lead_time
+            )
+        self.lead_time = lead_time
+
+        self.accumulation_period = accumulation_period
         self.max_steps = max_steps
         self.climate = climate
         self.sampling_rate = sampling_rate
-        self.reference_data = "severe_weather"
+        self.reference_data = reference_data
         self.center_meridionally = center_meridionally
         self.validation = validation
+        self.augment = augment
+
         self.local_data = None
         if local_data is not None:
             self.local_data = Path(local_data)
-        self.weighted_sampling = weighted_sampling
         self.source = source
 
         self.input_times, self.input_files = find_input_files(self.training_data_path, source=source)
@@ -101,22 +119,6 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
         if self.local_data is not None:
             self.split_and_copy_files()
 
-    @cached_property
-    def conus_slices(self) -> Dict[str, slice]:
-        with xr.open_dataset(self.training_data_path / self.input_files[0]) as data:
-            lons = data.longitude.data
-            lats = data.latitude.data
-        data.close()
-        del data
-
-        col_start = np.where(lons > -125)[0][0]
-        col_end = col_start + 3 * 32
-        row_start = np.where(lats > 25)[0][0]
-        row_end = row_start + 2 * 30
-        return {
-            "latitude": slice(row_start, row_end),
-            "longitude": slice(col_start, col_end),
-        }
 
     def split_and_copy_files(self) -> None:
         """
@@ -221,226 +223,126 @@ class DirectSevereWeatherForecastDataset(MERRAInputData):
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         assert len(self.input_indices) == n_samples_local
 
-    def find_precip_files(
-            self,
-            training_data_path: Path,
-            reference_data: str,
-            accumulation_period: int
-    ) -> np.ndarray:
-        """
-        Find precip files for training.
-        """
-        times = []
-        files = []
-
-        prefix = f"{reference_data.lower()}"
-        pattern = f"{self.reference_data.lower()}_{accumulation_period}/**/{prefix}*.nc"
-        date_pattern = f"{reference_data.lower()}_%Y%m%d%H%M%S.nc"
-
-        for path in sorted(list(training_data_path.glob(pattern))):
-            try:
-                date = datetime.strptime(path.name, date_pattern)
-                date64 = to_datetime64(date)
-                files.append(str(path.relative_to(training_data_path)))
-                times.append(date64)
-            except ValueError:
-                continue
-
-        times = np.array(times)
-        files = np.array(files)
-        return times, files
-
-
-    def worker_init_fn(self, w_id: int) -> None:
-        """
-        Seeds the dataset loader's random number generator.
-        """
-        seed = int.from_bytes(os.urandom(4), "big") + w_id
-        self.rng = np.random.default_rng(seed)
-
-
-    def calculate_valid_samples(self) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        A tuple of index arrays containing the indices of input- and output files for all training data
-        samples satifying the requested input and lead time combination.
-
-        Return: A tuple '(input_indices, output_indices)' with `input_indices` of shape
-            '(n_samples, n_input_times)' containing the indices of all the input files for each data
-            samples. Similarly, 'output_indices' is a numpy.ndarray of shape '(n_samples, n_lead_times)'
-            containing the corresponding file indices to load for the output data.
-        """
-        input_indices = []
-        output_indices = []
-        for ind, sample_time in enumerate(self.input_times):
-            input_times = [sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in [-1, 0]]
-
-            output_times = [
-                sample_time + np.timedelta64(t_i * self.input_time, "h") for t_i in np.arange(1, self.max_steps + 1)
-            ]
-            output_times = [t_o for t_o in output_times if t_o in self.output_times]
-            valid = all([t_i in self.input_times for t_i in input_times])
-            if valid and len(output_times) > 0:
-
-                prev_ind = np.searchsorted(self.input_times, input_times[0])
-                input_indices.append([prev_ind, ind])
-
-                output_inds = []
-                for output_time in output_times:
-                    output_ind = np.searchsorted(self.output_times, output_time)
-                    output_inds.append(output_ind)
-                output_indices.append(output_inds + [-1] * (self.max_steps - len(output_inds)))
-
-        return np.array(input_indices), np.array(output_indices)
-
     def __len__(self) -> int:
         """The number of samples in the dataset."""
         return trunc(len(self.input_indices) * self.sampling_rate)
 
-    def __getitem__(self, ind: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def load_severe_weather_data(self, output_file: str) -> Dict[str, torch.tensor]:
         """
-        Load and return a single data point from the dataset.
+        Load severe weather data from target-data file.
+
+        Args:
+            output_file: The relative path of the output file from which to load the data.
+
+        Return:
+            A dictionary containing the target names and corresponding tensors.
         """
-        lower = trunc(ind / self.sampling_rate)
-        upper = min(trunc((ind + 1) / self.sampling_rate), len(self.input_indices) - 1)
-        if lower < upper and not self.validation:
-            ind = self.rng.integers(lower, upper)
-        else:
-            ind = lower
-
-        try:
-            input_files = [self.input_files[ind] for ind in self.input_indices[ind]]
-            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
-            dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
-
-            static_time = input_times[-1]
-            static_in = torch.tensor(load_static_input(static_time, self.data_path))
-
-            input_time = self.input_time
-
-            # Remove one row along lat dimension.
-            pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
-
-            if self.center_meridionally:
-                transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
-            else:
-                transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
-
-            x = {
-                "x": transform(torch.stack(dynamic_in, 0)),
-                "static": transform(static_in),
-                "input_time": torch.tensor(input_time).to(dtype=torch.float32),
+        with xr.load_dataset(self.training_data_path / output_file) as data:
+            LOGGER.debug("Loading severe weather data from %s.", output_file)
+            data = data.compute()
+            tornado = torch.tensor(data.tornado.data)
+            hail = torch.tensor(data.hail.data)
+            wind = torch.tensor(data.wind.data)
+            severe = np.minimum(tornado.numpy() + hail.numpy() + wind.numpy(), 1.0)
+            target = {
+                "tornado": tornado,
+                "hail": hail,
+                "wind": wind,
+                "severe": severe,
             }
+        return target
 
-            inds = self.output_indices[ind]
-            inds = inds[0 <= inds]
+    def load_data(
+            self,
+            index: int,
+            roll: int,
+            flip_v: bool,
+            flip_h: bool,
+            scale: float = 1.0
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+        """
+        Load input and target data.
 
-            deltas = np.array([(self.output_times[output_ind] - input_times[-1]) for output_ind in inds])
-            if self.weighted_sampling:
-                deltas = deltas.astype("datetime64[s]")
-                delta_min = deltas.min()
-                delta_max = deltas.max()
-                weights = 0.5 + 0.5 * (delta - delta_min) / (delta_max - delta_min)
-                weights = weights.astype(np.float32)
-            else:
-                weights = np.ones_like(deltas).astype(np.float32)
-            weights /= weights.sum()
+        Args:
+            The index of the sample.
+            roll: The number of pixels by which to roll latitudes.
+            flip_v: Whether or not to flip the data meridionally.
+            flip_h: Whether or not to flip the data zonally.
+            scale: Apply scaling to data
+        """
+        input_time = self.input_steps[0]
+        input_indices = self.input_indices[index]
+        if self.validation:
+            step_ind = int(index * self.sampling_rate) % len(self.input_steps)
+            input_indices = [input_indices[step_ind], input_indices[-1]]
+            input_time = self.input_steps[step_ind]
+        else:
+            if 1 < len(self.input_steps):
+                step_ind = self.rng.integers(len(self.input_steps))
+                input_indices = [input_indices[step_ind], input_indices[-1]]
+                input_time = self.input_steps[step_ind]
 
-            if self.validation:
-                output_ind = inds[int(ind * self.sampling_rate) % len(inds)]
-            else:
-                output_ind = self.rng.choice(inds, p=weights)
-            output_file = self.output_files[output_ind]
-            output_time = self.output_times[output_ind]
+        input_files = [self.input_files[ind] for ind in input_indices]
+        input_times = [self.input_times[ind] for ind in input_indices]
 
-            lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
-            x["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
-
-            if self.climate:
-                climate = load_climatology(output_time, self.data_path)
-                x["climate"] = transform(torch.tensor(climate))
-
-
-            slices = self.conus_slices
-            with xr.load_dataset(self.training_data_path / output_file) as data:
-
-                slcs = self.conus_slices
-                data = data[slcs].compute()
-
-                tornado = torch.nan * torch.ones((360, 576))
-                tornado[slcs["latitude"], slcs["longitude"]] = torch.tensor(data.tornado.data)
-                hail = torch.nan * torch.ones((360, 576))
-                hail[slcs["latitude"], slcs["longitude"]] = torch.tensor(data.hail.data)
-                wind = torch.nan * torch.ones((360, 576))
-                wind[slcs["latitude"], slcs["longitude"]] = torch.tensor(data.wind.data)
-
-                LOGGER.debug("Loading precip data from %s.", output_file)
-                severe = np.minimum(tornado.numpy() + hail.numpy() + wind.numpy(), 1.0)
-
-                target = {
-                    "tornado": tornado,
-                    "hail": hail,
-                    "wind": wind,
-                    "severe": severe,
-                }
-
-            coords = x["static"][:2]
-
-            return x, target
-
-        except Exception as exc:
-            raise exc
-            LOGGER.exception(
-                "Encountered an error when load training sample %s. Falling back to another "
-                " randomly-chosen sample.",
-                ind
-            )
-            new_ind = np.random.randint(0, len(self))
-            return self[new_ind]
-
-
-    def get_forecast_input(self, init_time: np.datetime64, n_steps: int):
-
-        input_times = [init_time - np.timedelta64(self.input_time, "h"), init_time]
-
-        input_ind = np.searchsorted(self.input_times, input_times[0])
-        input_time = self.input_times[input_ind]
-        if input_time != input_times[0]:
-            raise ValueError(
-                "Missing required input for time %s.",
-                input_times[0]
-            )
-        dynamic_in = [load_dynamic_input(self.training_data_path / self.input_files[input_ind])]
-        input_ind = np.searchsorted(self.input_times, input_times[1])
-        input_time = self.input_times[input_ind]
-        if input_time != input_times[1]:
-            raise ValueError(
-                "Missing required input for time %s.",
-                input_times[1]
-            )
-        dynamic_in += [load_dynamic_input(self.trainign_data_path / self.input_files[input_ind])]
-
+        dynamic_in = [load_dynamic_input(self.training_data_path / path) for path in input_files]
 
         static_time = input_times[-1]
         static_in = torch.tensor(load_static_input(static_time, self.data_path))
+
+        # Remove one row along lat dimension.
+        pad = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
 
         if self.center_meridionally:
             transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
         else:
             transform = partial(nn.functional.pad, pad=((0, 0, 0, -1)))
 
-        inpt = {
-            "x": (transform(torch.stack(dynamic_in, 0))[None]).repeat_interleave(n_steps, dim=0),
-            "static": (transform(static_in)[None]).repeat_interleave(n_steps, dim=0),
-            "input_time": ((torch.tensor(self.input_time).to(dtype=torch.float32))[None]).repeat_interleave(n_steps, dim=0),
+        x = {
+            "x": transform(torch.stack(dynamic_in, 0)),
+            "static": transform(static_in),
+            "input_time": torch.tensor(input_time).to(dtype=torch.float32),
         }
 
-        output_times = init_time + np.timedelta64(self.input_time, "h") * np.arange(1, n_steps + 1)
-        climates = []
+        # Apply perturbation to input
+        if self.augment:
+            d_x = x["x"][1] - x["x"][0]
+            noise = 0.5 * torch.tensor(self.rng.normal(size=(2, d_x.shape[0], 1, 1)), dtype=np.float32)
+            x["x"] += noise * d_x
+
+        inds = self.output_indices[index]
+        inds = inds[0 <= inds]
+
+        if self.validation:
+            output_ind = inds[int(index * self.sampling_rate) % len(inds)]
+        else:
+            output_ind = self.rng.choice(inds)
+        output_file = self.output_files[output_ind]
+        output_time = self.output_times[output_ind]
+
+        lead_time = (output_time - max(input_times)).astype("timedelta64[h]").astype(np.float32)
+        x["lead_time"] = torch.tensor(lead_time).to(dtype=torch.float32)
+
         if self.climate:
-            for output_time in output_time:
-                climates.append(transform(load_climatology(output_time, self.data_path)))
+            climate = load_and_interp_climatology(output_time, self.data_path)
+            x["climate"] = transform(torch.tensor(climate))
+            if self.augment:
+                noise = 0.5 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)), dtype=np.float32)
+                x["climate"] += noise * d_x
 
-        climates = torch.stack(climates)
-        x["climate"] = climates
+        target = self.load_severe_weather_data(output_file)
 
-        return inpt
+        if self.augment and output_ind < (len(self.output_files) - 1):
+            next_time = self.output_times[output_ind + 1]
+            next_file = self.output_files[output_ind + 1]
+            diff = int((next_time - output_time).astype("timedelta64[h]").astype("int64").item())
+            if diff <= self.lead_time:
+                frac = self.rng.random()
+                next_target = self.load_severe_weather_data(next_file)
+                target = {
+                    name: frac * target[name] + (1.0 - frac) * next_target[name] for name in target
+                }
+                x["lead_time"] = x["lead_time"] + torch.tensor((1.0 - frac) * diff)
+
+        x, target = _transform_data(x, target, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
+        return x, target
