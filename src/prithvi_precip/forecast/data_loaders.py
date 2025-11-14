@@ -18,7 +18,7 @@ import xarray as xr
 from ..datasets.observations import ObservationLoader
 from ..utils import (
     find_input_files,
-    load_climatology,
+    load_and_interp_climatology,
     load_dynamic_input,
     load_static_input,
 )
@@ -138,7 +138,7 @@ class DirectForecastLoader:
             lead_times.append(torch.tensor(lead_time.astype(np.float32)))
             output_time = init_time + lead_time
             valid_times.append(output_time)
-            climate = torch.tensor(load_climatology(output_time, self.input_data_path.parent))
+            climate = torch.tensor(load_and_interp_climatology(output_time, self.input_data_path.parent))
             climates.append(transform_3d(climate))
 
         climate = torch.stack(climates)
@@ -260,7 +260,7 @@ class AutoregressiveForecastLoader:
 
         clim_times = [init_time + np.timedelta64(self.input_time, "h") * step for step in range(1, self.n_steps + 1)]
         climate = [
-            torch.tensor(load_climatology(clim_time, self.input_data_path.parent)) for clim_time in clim_times
+            torch.tensor(load_and_interp_climatology(clim_time, self.input_data_path.parent)) for clim_time in clim_times
         ]
 
         # Remove one row along lat dimension.
