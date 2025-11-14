@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import shutil
 from time import sleep
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -28,6 +28,7 @@ from ..utils import to_datetime
 
 
 LOGGER = logging.getLogger(__name__)
+
 
 
 def untile(tnsr: torch.Tensor) -> torch.Tensor:
@@ -55,6 +56,54 @@ def tile(tnsr: torch.Tensor, tile_size: Tuple[int, int]) -> torch.Tensor:
     L, C, Y, X = tnsr.shape
     tnsr = tnsr.reshape(L, C, Y // TY, TY, X // TX, TX)
     return torch.permute(tnsr, (2, 4, 0, 1, 3, 5))
+
+
+def transform_observations(
+        observations: Dict[str, torch.Tensor],
+        meta_data: torch.Tensor,
+        tile_size: Tuple[int, int],
+        roll: int,
+        flip_v: bool,
+        flip_h: bool,
+        scale: float = 1.0
+) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    """
+    Transform data by applying zonal roll and meridional flipping.
+
+    Args:
+        inpt: The dictionary containing the input data.
+        targets: A single tensor containing the target or a dictionary containing the targets
+        roll: The number of pixels by which to roll the data zonally.
+        flip_v: Whether or not to flip the data meridionally.
+        flip_h: Whether or not to flip the data zonally.
+        scale: Apply scaling to data
+
+    Return:
+        A tuple ``(inpt, target)`` containing the transformed input data.
+    """
+    observations = untile(observations)
+    meta_data = untile(meta_data)
+    if 0 < roll:
+        observations = torch.roll(observations, roll, dims=-1)
+        meta_data = torch.roll(meta_data, roll, dims=-1)
+
+    if flip_v:
+        observations = torch.flip(observations, dims=(-2,))
+        meta_data = torch.flip(meta_data, dims=(-2,))
+
+    if flip_h:
+        observations = torch.flip(observations, dims=(-1,))
+        meta_data = torch.flip(meta_data, dims=(-1,))
+
+    if scale != 1.0:
+        from torchvision.transforms.v2.functional import affine
+        observations = affine(observations, angle=0, translate=[0, 0], shear=0, scale=scale)
+        meta_data = affine(meta_data, angle=0, translate=[0, 0], shear=0, scale=scale)
+
+    observations = tile(observations, tile_size)
+    meta_data = tile(meta_data, tile_size)
+
+    return observations, meta_data
 
 
 class ObservationLoader(Dataset):
@@ -360,7 +409,9 @@ class ObservationLoader(Dataset):
             offset: Optional[int] = None,
             randomize: bool = True,
             roll: int = 0,
-            flip: bool = False
+            flip_v: bool = False,
+            flip_h: bool = False,
+            scale: float = 1.0
     ):
         """
         Load observations for a given time.
@@ -449,16 +500,16 @@ class ObservationLoader(Dataset):
         observations = torch.nan_to_num(observations, nan=-1.5)
         meta_data = torch.nan_to_num(meta_data, nan=-1.5)
 
-        if (0 < roll) or flip:
-            observations = untile(observations)
-            meta_data = untile(meta_data)
-            observations = torch.roll(observations, roll, (-1))
-            meta_data = torch.roll(meta_data, roll, (-1))
-            if flip:
-                observations = torch.flip(observations, (-2))
-                meta_data = torch.flip(meta_data, (-2))
-            observations = tile(observations, self.tile_size)
-            meta_data = tile(meta_data, self.tile_size)
+        if (0 < roll) or flip_h or flip_v or scale != 1.0:
+            observations, meta_data = transform_observations(
+                observations,
+                meta_data,
+                self.tile_size,
+                roll=roll,
+                flip_v=flip_v,
+                flip_h=flip_h,
+                scale=scale
+            )
 
         return observations, meta_data
 
@@ -499,24 +550,56 @@ class ObsDatasetBase():
         else:
             ind = lower
 
-        x, y = super().load_data(ind, roll=0, flip=False)
-        input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
-        obs = []
-        meta = []
-        for time_ind, time in enumerate(input_times):
-            obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
-            obs.append(obs_t)
-            meta.append(meta_t)
-        obs = torch.stack(obs, 0)
-        obs_mask = obs < -1.4
-        obs = torch.nan_to_num(obs, nan=-1.5)
-        meta = torch.stack(meta, 0)
+        try:
+            roll = 0
+            flip_v = False
+            flip_h = False
+            scale = 1.0
+            if not self.validation and self.augment:
+                roll = self.rng.integers(0, 576)
+                flip_v = 0.5 < self.rng.random()
+                flip_h = 0.5 < self.rng.random()
+                scale = self.rng.uniform(1.0, 1.2)
 
-        x["obs"] = obs
-        x["obs_mask"] = obs_mask
-        x["obs_meta"] = meta
+            x, y = self.load_data(ind, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
+
+            input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
+            obs = []
+            meta = []
+            for time_ind, time in enumerate(input_times):
+                obs_t, meta_t = self.obs_loader.load_observations(
+                    time,
+                    offset=len(input_times) - time_ind - 1,
+                    roll=roll,
+                    flip_v=flip_v,
+                    flip_h=flip_h,
+                    scale=scale
+                )
+                obs.append(obs_t)
+                meta.append(meta_t)
+            obs = torch.stack(obs, 0)
+            obs_mask = obs < -1.4
+            obs = torch.nan_to_num(obs, nan=-1.5)
+            meta = torch.stack(meta, 0)
+
+            x["obs"] = obs
+            x["obs_mask"] = obs_mask
+            x["obs_meta"] = meta
+
+            return x, y
+
+        except Exception as exc:
+            raise exc
+            LOGGER.exception(
+                "Encountered an error when load training sample %s. Falling back to another "
+                " randomly-chosen sample.",
+                ind
+            )
+            new_ind = np.random.randint(0, len(self))
+            return self[new_ind]
 
         return x, y
+
 
 
 class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDataset):
@@ -527,7 +610,8 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
     def __init__(
             self,
             training_data_path: Union[Path, str],
-            input_time: int = 3,
+            input_time: Union[int, List[int]] = 3,
+            lead_time: int = 3,
             accumulation_period: int = 3,
             max_steps: int = 24,
             climate: bool = True,
@@ -536,6 +620,7 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
             center_meridionally: bool = True,
             validation: bool = False,
             local_data: Optional[Path] = None,
+            augment: bool = False,
             source: str = "merra2",
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
@@ -544,6 +629,7 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
         Args:
             training_data_path: The directory containing the dynamic input data.
             input_time: The time difference between input samples.
+            lead_time: The lead time step.
             accumulation_period: The precipitation accumulation period.
             max_steps: The maximum number of timesteps to forecast precipitation.
             climate: Whether to include climatology data in the input.
@@ -554,6 +640,7 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
             validation: Flat indicating whether the dataset is used to load validation or training data.
             local_data: An optional path pointing to a location to which to copy the training data. This should
                 typically be node-local memory that can be accessed rapidly.
+            augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
             source: The source of the input data: 'merra2' or 'geos'
             n_tiles: The number of global observations tiles.
             tile_size: The size of each tile.
@@ -562,14 +649,16 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
             self,
             training_data_path=training_data_path,
             input_time=input_time,
+            lead_time=lead_time,
             accumulation_period=accumulation_period,
             max_steps=max_steps,
             climate=climate,
-            sampling_rate=1.0,
+            sampling_rate=sampling_rate,
             reference_data=reference_data,
             center_meridionally=center_meridionally,
             validation=validation,
             local_data=local_data,
+            augment=augment,
             source=source,
         )
         ObsDatasetBase.__init__(self, training_data_path, n_tiles, tile_size)

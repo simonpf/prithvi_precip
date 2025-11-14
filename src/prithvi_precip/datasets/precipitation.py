@@ -25,7 +25,6 @@ from .merra2 import MERRAInputData
 from ..data.merra2 import SURFACE_VARS, VERTICAL_VARS, LEVELS
 from ..utils import (
     find_input_files,
-    load_climatology,
     load_and_interp_climatology,
     load_dynamic_input,
     load_static_input,
@@ -428,6 +427,12 @@ class DirectPrecipForecastDataset(MERRAInputData):
             "input_time": torch.tensor(input_time).to(dtype=torch.float32),
         }
 
+        # Apply perturbation to input
+        if self.augment:
+            d_x = x["x"][1] - x["x"][0]
+            noise = 0.05 * torch.tensor(self.rng.normal(size=(2, d_x.shape[0], 1, 1)).astype(np.float32))
+            x["x"] += noise * d_x
+
         inds = self.output_indices[index]
         inds = inds[0 <= inds]
 
@@ -444,6 +449,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
         if self.climate:
             climate = load_and_interp_climatology(output_time, self.data_path)
             x["climate"] = transform(torch.tensor(climate))
+            if self.augment:
+                noise = 0.05 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)).astype(np.float32))
+                x["climate"] += noise * d_x
 
         with xr.load_dataset(self.training_data_path / output_file) as data:
             LOGGER.debug("Loading precip data from %s.", output_file)
@@ -452,6 +460,23 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 precip = 1e3 * precip
             if precip.shape[0] == 361:
                 precip = 0.5 * (precip[1:] + precip[:-1])
+
+        if self.augment and output_ind < (len(self.output_files) - 1):
+            next_time = self.output_times[output_ind + 1]
+            next_file = self.output_files[output_ind + 1]
+            diff = int((next_time - output_time).astype("timedelta64[h]").astype("int64").item())
+            if diff <= self.lead_time:
+                frac = self.rng.random()
+                with xr.load_dataset(self.training_data_path / next_file) as data:
+                    LOGGER.debug("Loading next precip data from %s.", output_file)
+                    next_precip = torch.tensor(data.surface_precip.data.astype(np.float32))
+                    if self.reference_data.startswith("era5"):
+                        next_precip = 1e3 * next_precip
+                    if next_precip.shape[0] == 361:
+                        next_precip = 0.5 * (next_precip[1:] + next_precip[:-1])
+                LOGGER.info("Interpoloating precip with frac %s", frac)
+                precip = frac * precip + (1.0 - frac) * next_precip
+                x["lead_time"] = x["lead_time"] + torch.tensor((1.0 - frac) * diff)
 
         x, precip = _transform_data(x, precip, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
         return x, precip
