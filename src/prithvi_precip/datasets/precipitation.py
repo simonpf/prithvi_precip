@@ -474,7 +474,6 @@ class DirectPrecipForecastDataset(MERRAInputData):
                         next_precip = 1e3 * next_precip
                     if next_precip.shape[0] == 361:
                         next_precip = 0.5 * (next_precip[1:] + next_precip[:-1])
-                LOGGER.info("Interpoloating precip with frac %s", frac)
                 precip = frac * precip + (1.0 - frac) * next_precip
                 x["lead_time"] = x["lead_time"] + torch.tensor((1.0 - frac) * diff)
 
