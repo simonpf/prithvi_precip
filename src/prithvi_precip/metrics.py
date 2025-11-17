@@ -200,6 +200,8 @@ class MSE(QuantificationMetric):
         super().__init__(
             buffers={
                 "tot_sq_error": ((1,), np.float64),
+                "target": ((1,), np.float64),
+                "target2": ((1,), np.float64),
                 "counts": ((1,), np.float64),
             }
         )
@@ -228,6 +230,8 @@ class MSE(QuantificationMetric):
         weights = np.cos(np.deg2rad(lats))
 
         with self.lock:
+            self.target += (target * weights).sum()
+            self.target2 += ((target ** 2) * weights).sum()
             self.tot_sq_error += (((pred - target) ** 2) * weights).sum()
             self.counts += weights.sum()
 
@@ -236,13 +240,21 @@ class MSE(QuantificationMetric):
         Calculate the MSE for all results passed to this metric object.
 
         Return:
-            An xarray.Dataset containing a single, scalar variable 'mse' representing
-            the MSE calculated over all results passed to this metric object.
+            An xarray.Dataset containing scalar variables 'mse' and 'nmse' representing
+            the MSE and normalized MSE calculated over all results passed to this metric object.
         """
+        mean = (self.target / self.counts)[0]
+        var = self.target2 / self.counts - mean ** 2
+        mse = (self.tot_sq_error / self.counts)[0]
         with np.errstate(invalid='ignore'):
-            mse = xr.Dataset({"mse": (self.tot_sq_error / self.counts)[0]})
+            mse = xr.Dataset({
+                "mse": mse,
+                "nmse": 100.0 * mse / var
+            })
         mse.mse.attrs["full_name"] = "MSE"
         mse.mse.attrs["unit"] = "(mm h^{-1})^2"
+        mse.mse.attrs["full_name"] = "Normalized MSE"
+        mse.mse.attrs["unit"] = "%"
         return mse
 
 
