@@ -113,7 +113,7 @@ def run_direct_forecast(
 
         date = init_time.astype("datetime64[s]").item()
         fname = date.strftime("forecast_%Y%m%d%H%M.nc")
-        output_file = output_path / fname
+        output_file = Path(output_path) / fname
         if output_file.exists():
             existing = xr.load_dataset(output_file)
             res = xr.concat([res, existing], "valid_time").sortby("valid_time")
@@ -144,6 +144,7 @@ def run_autoregressive_forecast(
     """
     model = model.to(device=device, dtype=dtype).eval()
     results = []
+    output_path = Path(output_path)
 
     for inpt in tqdm(iter(data_loader), total=len(data_loader)):
 

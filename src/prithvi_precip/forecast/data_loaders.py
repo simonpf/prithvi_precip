@@ -18,6 +18,7 @@ import xarray as xr
 from ..datasets.observations import ObservationLoader
 from ..utils import (
     find_input_files,
+    load_climatology,
     load_and_interp_climatology,
     load_dynamic_input,
     load_static_input,
@@ -138,7 +139,8 @@ class DirectForecastLoader:
             lead_times.append(torch.tensor(lead_time.astype(np.float32)))
             output_time = init_time + lead_time
             valid_times.append(output_time)
-            climate = torch.tensor(load_and_interp_climatology(output_time, self.input_data_path.parent))
+            #climate = torch.tensor(load_and_interp_climatology(output_time, self.input_data_path.parent))
+            climate = torch.tensor(load_climatology(output_time, self.input_data_path.parent))
             climates.append(transform_3d(climate))
 
         climate = torch.stack(climates)
@@ -195,7 +197,8 @@ class AutoregressiveForecastLoader:
             input_time: int = 3,
             source: str = "merra2",
             batch_size: Optional[int] = None,
-            center_meridionally: bool = True
+            center_meridionally: bool = True,
+            full_climatology: bool = False
     ):
         self.input_data_path = Path(input_data_path)
         self.input_time = input_time
@@ -204,6 +207,7 @@ class AutoregressiveForecastLoader:
         self.input_times, self.input_files = find_input_files(self.input_data_path, source=source)
         self.input_indices = self.calculate_valid_samples()
         self.center_meridionally = center_meridionally
+        self.full_climatology = full_climatology
 
         if batch_size is None:
             self.batch_size = 1
@@ -259,16 +263,21 @@ class AutoregressiveForecastLoader:
         ]
 
         clim_times = [init_time + np.timedelta64(self.input_time, "h") * step for step in range(1, self.n_steps + 1)]
-        climate = [
-            torch.tensor(load_and_interp_climatology(clim_time, self.input_data_path.parent)) for clim_time in clim_times
-        ]
+        if self.full_climatology:
+            climate = [
+                torch.tensor(load_climatology(clim_time, self.input_data_path.parent)) for clim_time in clim_times
+            ]
+        else:
+            climate = [
+                torch.tensor(load_and_interp_climatology(clim_time, self.input_data_path.parent)) for clim_time in clim_times
+            ]
 
         # Remove one row along lat dimension.
         if self.center_meridionally:
             transform = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
             transform_3d = lambda tnsr: 0.5 * (tnsr[..., 1:, :] + tnsr[..., :-1, :])
         else:
-            transform = partial(nn.functional.pad, pad=(0, 0, 0, -1))
+            transform = partial(nn.functional.pad, pad=(0, 0, 0, -1), mode="constant", value=0)
             transform_3d = partial(nn.functional.pad, pad=(0, 0, 0, -1, 0, 0), mode="constant", value=0)
 
         inpt = {
@@ -281,7 +290,9 @@ class AutoregressiveForecastLoader:
 
         return init_time, inpt
 
-
+    def __iter__(self):
+        for ind in range(len(self)):
+            yield self[ind]
 
     def __getitem__(self, ind: int) -> Tuple[np.datetime64, np.datetime64, Dict[str, torch.tensor]]:
         """
@@ -291,6 +302,11 @@ class AutoregressiveForecastLoader:
             A tuple ``(init_time, valid_time, input_data)`` containing the initialization time (``init_time``),
             the valid forecast time (``valid_time``), and a dictionary containing the input data (``input_data``).
         """
+        if len(self) <= ind:
+            raise ValueError(
+                "Index %s exceeds size of dataset.", len(self)
+            )
+
         batch_start = ind * self.batch_size
         batch_end = min(batch_start + self.batch_size, self.input_indices.shape[0])
 

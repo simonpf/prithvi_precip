@@ -21,13 +21,4 @@ checkpoint_encoder = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 
 checkpoint_decoder = [0, 1, 2, 3, 4]
 scaling_factors = "/gdata1/simon/prithvi_precip/prithvi_precip_data_small/scaling_factors"
 
-[architecture.head]
-individual = false
-depth = 4
-activation_factory = "GELU"
-normalization_factory = "LayerNormFirst"
-
-[output.surface_precip]
-kind = "Quantiles"
-quantiles = 32
-
+[output]
