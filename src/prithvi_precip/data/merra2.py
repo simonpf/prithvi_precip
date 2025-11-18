@@ -280,12 +280,14 @@ def download_static(
         output_path: A path object pointing to the directory to which to download the data.
         domain: Name of the domain for which to extract the data.
     """
-    time_range = datetime(2020, 1, 1)
+    time_range = TimeRange(datetime(1980, 1, 1), datetime(2020, 1, 1))
     merra_recs = []
     for prod in STATIC_PRODUCTS:
         prod_recs = prod.get(time_range)
-        assert len(prod_recs) == 1
+        #assert len(prod_recs) == 1
         merra_recs += prod_recs
+
+    print("MERRA RECS :: ", merra_recs)
 
     vars_req = STATIC_SURFACE_VARS
 
@@ -309,7 +311,7 @@ def download_static(
     output_path = Path(output_path) / "static"
     output_path.mkdir(exist_ok=True)
 
-    output_file = output_path / "merra2_static.nc"
+    output_file = output_path / "static.nc"
     encoding = {name: {"zlib": True} for name in data}
     data.to_netcdf(output_file, encoding=encoding)
 
