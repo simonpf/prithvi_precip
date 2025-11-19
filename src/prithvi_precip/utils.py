@@ -347,7 +347,6 @@ def find_input_files(training_data_path: Path, source: str = "merra2") -> Tuple[
         """
         times = []
         files = []
-
         for path in sorted(list(training_data_path.glob(f"dynamic/**/{source}_*.nc"))):
             try:
                 date = datetime.strptime(path.name, f"{source}_%Y%m%d%H%M%S.nc")
@@ -358,6 +357,12 @@ def find_input_files(training_data_path: Path, source: str = "merra2") -> Tuple[
             except ValueError:
                 continue
 
+        if len(files) == 0:
+            LOGGER.warning(
+                "No '%s' input files found in %s. Note that the search doesn't descend into sym-linked folders. ",
+                source,
+                training_data_path
+            )
         times = np.array(times)
         files = np.array(files)
         return times, files

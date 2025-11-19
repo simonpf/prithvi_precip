@@ -445,7 +445,6 @@ class ObservationLoader(Dataset):
                 try:
                     obs = data[obs_name].data
 
-
                     if self.obs_regexp is not None:
                         obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                         obs_ids = data[obs_ids].data
@@ -491,10 +490,9 @@ class ObservationLoader(Dataset):
                     meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
                     meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
                 except Exception as exc:
-                    raise exc
                     LOGGER.warning(
-                        "Encountered an error when loading observations from file '%s'.",
-                        path
+                        "Encountered an error when loading observations for tile [%s, %s] from file '%s'.",
+                        row_ind, col_ind, path
                     )
 
         observations = torch.nan_to_num(observations, nan=-1.5)
@@ -589,7 +587,6 @@ class ObsDatasetBase():
             return x, y
 
         except Exception as exc:
-            raise exc
             LOGGER.exception(
                 "Encountered an error when load training sample %s. Falling back to another "
                 " randomly-chosen sample.",
