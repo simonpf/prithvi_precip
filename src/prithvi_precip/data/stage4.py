@@ -19,7 +19,7 @@ from rich.progress import Progress
 from scipy.stats import binned_statistic_2d
 import xarray as xr
 
-from precipfm.definitions import LAT_BINS, LON_BINS
+from prithvi_precip.domains import get_lon_lat_bins
 
 
 LOGGER = logging.getLogger(__name__)
