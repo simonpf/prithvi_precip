@@ -46,7 +46,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             training_data_path: Union[Path, str],
             input_time: Union[int, List[int]] = 3,
             lead_time: int = 3,
-            accumulation_period: int = 3,
+            accumulation_period: int = 24,
             max_steps: int = 24,
             climate: bool = True,
             sampling_rate: float = 1.0,
@@ -118,6 +118,13 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
 
         if self.local_data is not None:
             self.split_and_copy_files()
+
+    @cached_property
+    def severe_weather_mask(self) -> xr.Dataset:
+        """
+        A mask identifying the valid domain of the training data.
+        """
+        return xr.load_dataset(Path(__file__).parent / "severe_weather_mask.nc").mask.data
 
 
     def split_and_copy_files(self) -> None:
@@ -243,12 +250,18 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             tornado = torch.tensor(data.tornado.data)
             hail = torch.tensor(data.hail.data)
             wind = torch.tensor(data.wind.data)
+
+            mask = ~torch.tensor(self.severe_weather_mask)
+            tornado[mask] = torch.nan
+            hail[mask] = torch.nan
+            wind[mask] = torch.nan
+
             severe = np.minimum(tornado.numpy() + hail.numpy() + wind.numpy(), 1.0)
             target = {
                 "tornado": tornado,
                 "hail": hail,
                 "wind": wind,
-                "severe": severe,
+                "severe": torch.tensor(severe),
             }
         return target
 
@@ -307,7 +320,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
         # Apply perturbation to input
         if self.augment:
             d_x = x["x"][1] - x["x"][0]
-            noise = 0.5 * torch.tensor(self.rng.normal(size=(2, d_x.shape[0], 1, 1)), dtype=np.float32)
+            noise = 0.05 * torch.tensor(self.rng.normal(size=(2, d_x.shape[0], 1, 1)).astype(np.float32))
             x["x"] += noise * d_x
 
         inds = self.output_indices[index]
@@ -327,7 +340,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             climate = load_and_interp_climatology(output_time, self.data_path)
             x["climate"] = transform(torch.tensor(climate))
             if self.augment:
-                noise = 0.5 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)), dtype=np.float32)
+                noise = 0.05 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)).astype(np.float32))
                 x["climate"] += noise * d_x
 
         target = self.load_severe_weather_data(output_file)
