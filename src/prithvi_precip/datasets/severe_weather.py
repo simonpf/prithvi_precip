@@ -46,7 +46,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             training_data_path: Union[Path, str],
             input_time: Union[int, List[int]] = 3,
             lead_time: int = 3,
-            accumulation_period: int = 3,
+            accumulation_period: int = 24,
             max_steps: int = 24,
             climate: bool = True,
             sampling_rate: float = 1.0,
