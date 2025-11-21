@@ -1,0 +1,25 @@
+name = "prithvi_precip_imerg"
+
+[architecture]
+name = "PrithviWxC"
+full_output = true
+
+[architecture.backbone]
+embed_dim = 2560
+n_blocks_encoder = 12
+n_blocks_decoder = 2
+mlp_multiplier = 4
+n_heads = 16
+n_lats_px = 360
+n_lons_px = 576
+mask_unit_size_px = [30, 32]
+residual = "climate"
+encoder_shifting = true
+decoder_shifting = true
+checkpoint_encoder = []
+checkpoint_decoder = []
+input_scalers_epsilon = 0.0
+output_scalers_epsilon = 0.0
+scaling_factors = "/gdata1/simon/prithvi_precip/prithvi_precip_data_small/scaling_factors"
+
+[output]
