@@ -1,0 +1,39 @@
+name: prithvi_tc
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - cdsapi
+  - ipyleaflet
+  - numpy
+  - requests
+  - filelock
+  - cfgrib
+  - hdf5
+  - geopandas
+  - h5py
+  - pytest
+  - tomlkit
+  - pyarrow
+  - boto3
+  - cryptography
+  - sphinx_rtd_theme
+  - beautifulsoup4
+  - lxml
+  - netcdf4
+  - pyproj
+  - paramiko
+  - satpy
+  - shapely
+  - pyhdf
+  - scipy
+  - appdirs
+  - hdf4
+  - xarray
+  - pip
+  - pip:
+    - git+https://github.com/see-geo/pansat.git@refactoring
+    - git+https://github.com/NASA-IMPACT/Prithvi-WxC.git
+
+
