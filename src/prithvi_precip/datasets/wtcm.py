@@ -69,7 +69,7 @@ def get_n_wtcm(path: Path) -> int:
         The number of storms in the file.
     """
     parts = path.name.split("_")
-    return int(parts[5:-3], "%Y%m%d%H")
+    return int(parts[-1][5:-3])
 
 
 class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
