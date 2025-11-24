@@ -1,6 +1,6 @@
 """
 prithvi_precip.datasets.wtcm
-======================================
+============================
 
 Provides datasets for loading WTCM winds.
 """
@@ -410,7 +410,7 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
 
         inds = self.output_indices[index]
 
-        targets = []
+        targets = {}
         climates = []
         ys = []
 
@@ -435,12 +435,12 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
                 output_ind = available_times.index(output_time)
                 output_file = self.output_files[output_indices[output_ind]]
                 targets_s = self.load_wtcm_data(self.training_data_path / output_file)
+                targets_s = {name: transform(tnsr) for name, tnsr in targets_s.items()}
             else:
                 targets_s.append({
                     "u10": torch.nan * torch.zeros((1, 360, 576)),
                     "v10": torch.nan * torch.zeros((1, 360, 576))
                 })
-            targets.append(targets_s)
 
             if output_time in self.input_times:
                 ind = np.searchsorted(self.input_times, output_time)
@@ -448,9 +448,12 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
                 if self.climate:
                     y = (y - climates[-1])
                 y = y / self.output_sig
-                targets[-1]["y"] = transform(y)
+                targets_s["y"] = transform(y)
             else:
-                targets[-1]["y"] = torch.nan * torch.zeros_like(climates[-1])
+                targets_s["y"] = torch.nan * torch.zeros_like(climates[-1])
+
+            for key, tnsr in targets_s.items():
+                targets.setdefault(key, []).append(tnsr)
 
         if 0 < len(climates):
             x["climate"] = transform(torch.stack(climates, 0))
