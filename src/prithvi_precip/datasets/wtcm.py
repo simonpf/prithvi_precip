@@ -58,6 +58,20 @@ def get_date_wtcm(path: Path) -> datetime:
     return datetime.strptime(parts[3], "%Y%m%d%H")
 
 
+def get_n_wtcm(path: Path) -> int:
+    """
+    Extract number of  WTCM files from filename.
+
+    Args:
+        path: The path pointing to the WTCM file.
+
+    Return:
+        The number of storms in the file.
+    """
+    parts = path.name.split("_")
+    return int(parts[5:-3], "%Y%m%d%H")
+
+
 class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
     """
     A PyTorch Dataset for loading WTCM winds for forecasts without unrolling.
@@ -153,8 +167,10 @@ class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
             try:
                 date = get_date_wtcm(path)
                 date64 = to_datetime64(date)
-                files.append(str(path.relative_to(training_data_path)))
-                times.append(date64)
+                n_storms = get_n_wtcm(path)
+                if 0 < n_storms:
+                    files.append(str(path.relative_to(training_data_path)))
+                    times.append(date64)
             except ValueError:
                 continue
 
