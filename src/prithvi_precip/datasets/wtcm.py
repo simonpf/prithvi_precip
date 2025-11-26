@@ -179,6 +179,106 @@ class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
         return times, files
 
 
+    def split_and_copy_files(self) -> None:
+        """
+        Shards data across nodes and copies them to the location pointed to by self.local_data.
+        """
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        LOGGER.info("Splitting data: %s %s %s", rank, local_rank, world_size)
+
+        n_samples = len(self.input_indices)
+        n_samples_local = n_samples // world_size
+        start = rank * n_samples_local
+        end = start + n_samples_local
+
+        local_input_indices = self.input_indices[start:end]
+        local_output_indices = self.output_indices[start:end]
+
+        # Create directory for local data
+        base_folder = self.training_data_path.parent.name
+
+        if self.validation:
+            training_local = self.local_data / base_folder / f"validation_data_{local_rank:02}"
+        else:
+            training_local = self.local_data / base_folder / f"training_data_{local_rank:02}"
+
+        training_local.mkdir(exist_ok=True, parents=True)
+
+        # Copy input and output samples.
+        LOGGER.info(
+            "Copying %s training files to local directory %s.",
+            len(local_input_indices),
+            training_local
+        )
+        input_files = []
+        input_times = []
+        for inds in local_input_indices:
+            input_files += list(self.input_files[inds])
+        input_files = set(input_files)
+
+        output_files = []
+        for inds in local_output_indices:
+            out_inds = [ind for ind in inds if 0 <= ind]
+            output_files += list(self.output_files[out_inds])
+        output_files = set(output_files)
+
+        all_files = input_files.union(output_files)
+
+        for path in all_files:
+            rel_path = Path(path)
+            target_path = training_local / rel_path
+            if not target_path.exists():
+                target_path.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy2(self.training_data_path / rel_path, target_path)
+
+        if local_rank == 0 and not self.validation:
+            LOGGER.info(
+                "Copying static files to temporary directory."
+            )
+            climatology = training_local.parent / "climatology"
+            if not climatology.exists():
+                shutil.copytree(self.training_data_path.parent / "climatology", climatology, dirs_exist_ok=True)
+            static_data = training_local.parent / "static"
+            if not static_data.exists():
+                shutil.copytree(self.training_data_path.parent / "static", static_data, dirs_exist_ok=True)
+        else:
+            static_data = training_local.parent / "static"
+            while not static_data.exists():
+                sleep(0.1)
+
+        rank = int(os.environ.get("RANK", 0))
+
+        self.training_data_path = training_local
+        self.data_path = self.training_data_path.parent
+        self.input_times, self.input_files = find_input_files(self.training_data_path, source="merra2")
+        self.output_times, self.output_files = self.find_wtcm_files(self.training_data_path)
+
+        # Filter input and output times to ensure all processes have the same number of samples.
+        input_times_new = []
+        input_files_new = []
+        for input_time, input_file in zip(self.input_times, self.input_files):
+            if input_file in input_files:
+                input_times_new.append(input_time)
+                input_files_new.append(input_file)
+        self.input_times = input_times_new
+        self.input_files = input_files_new
+
+        output_times_new = []
+        output_files_new = []
+        for output_time, output_file in zip(self.output_times, self.output_files):
+            if output_file in output_files:
+                output_times_new.append(output_time)
+                output_files_new.append(output_file)
+        self.output_times = output_times_new
+        self.output_files = output_files_new
+
+        self.input_indices, self.output_indices = self.calculate_valid_samples()
+        assert len(self.input_indices) == n_samples_local
+
+
     def __len__(self) -> int:
         """The number of samples in the dataset."""
         return trunc(len(self.input_indices) * self.sampling_rate)
