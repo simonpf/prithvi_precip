@@ -41,6 +41,7 @@ class DirectForecastLoader:
             observation_layers: Optional[int] = None,
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
+            full_climatology: bool = False
     ):
         """
         Args:
@@ -56,6 +57,8 @@ class DirectForecastLoader:
             n_tiles: A tuple specifying the number of meridional and zonal observation tiles,
                  respectively.
             tile_size: A  tuple specifying the zonal and meridional size of the observation tiles.
+            full_climatology: Set to True to force loading of full climatology. Otherwise will use
+                interpolated climatology.
         """
         self.input_data_path = Path(input_data_path)
         self.input_time = input_time
@@ -64,6 +67,7 @@ class DirectForecastLoader:
         self.input_times, self.input_files = find_input_files(self.input_data_path, source=source)
         self.input_indices = self.calculate_valid_samples()
         self.center_meridionally = center_meridionally
+        self.full_climatology = full_climatology
 
         if batch_size is None:
             self.batch_size = 1
@@ -139,8 +143,10 @@ class DirectForecastLoader:
             lead_times.append(torch.tensor(lead_time.astype(np.float32)))
             output_time = init_time + lead_time
             valid_times.append(output_time)
-            #climate = torch.tensor(load_and_interp_climatology(output_time, self.input_data_path.parent))
-            climate = torch.tensor(load_climatology(output_time, self.input_data_path.parent))
+            if self.full_climatology:
+                climate = torch.tensor(load_climatology(output_time, self.input_data_path.parent))
+            else:
+                climate = torch.tensor(load_and_interp_climatology(output_time, self.input_data_path.parent))
             climates.append(transform_3d(climate))
 
         climate = torch.stack(climates)

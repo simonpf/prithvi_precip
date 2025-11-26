@@ -36,7 +36,12 @@ def get_prediction(tnsr: torch.Tensor) -> torch.Tensor:
     return tnsr
 
 
-def post_process_results(inpt: Dict[str, torch.Tensor], results: Dict[str, torch.Tensor]) -> xr.Dataset:
+def post_process_results(
+        inpt: Dict[str, torch.Tensor],
+        results: Dict[str, torch.Tensor],
+        init_times: np.ndarray,
+        valid_times: np.ndarray
+) -> xr.Dataset:
     """
     Default post processing function extracting results from forecast and storing
     them in an xr.Dataset.
@@ -44,6 +49,8 @@ def post_process_results(inpt: Dict[str, torch.Tensor], results: Dict[str, torch
     Args:
         inpt: The batch containing the input data.
         results: A dictionary containing the forecast results.
+        init_times: The initialization times for all forecasts in the batch.
+        valid_times: The valid times for all forecasts.
     """
     static = inpt["static"]
     if static.dim() == 5:
@@ -106,10 +113,17 @@ def run_direct_forecast(
         }
 
         with torch.no_grad():
-            res = post_process_fn(batch, model(batch, **forward_kwargs))
+            res = post_process_fn(
+                batch,
+                model(batch, **forward_kwargs),
+                init_time,
+                valid_times
+            )
             res = res.rename(batch="valid_time")
-            res["initialization_time"] = init_time
-            res["valid_time"] = (("valid_time",), valid_times)
+            if "initialization_time" not in res:
+                res["initialization_time"] = init_time
+            if "valid_time" not in res:
+                res["valid_time"] = (("valid_time",), valid_times)
 
         date = init_time.astype("datetime64[s]").item()
         fname = date.strftime("forecast_%Y%m%d%H%M.nc")
@@ -154,9 +168,16 @@ def run_autoregressive_forecast(
         }
 
         with torch.no_grad():
-            res = post_process_fn(batch, model(batch)).rename(step="valid_time")
-            res["valid_time"] = (("batch", "valid_time"), valid_times)
-            res["initialization_time"] = (("batch",), init_times)
+            res = post_process_fn(
+                batch,
+                model(batch),
+                init_times,
+                valid_times
+            ).rename(step="valid_time")
+            if "valid_time" not in res:
+                res["valid_time"] = (("batch", "valid_time"), valid_times)
+            if "initialization_time" not in res:
+                res["initialization_time"] = (("batch",), init_times)
 
         for batch_ind in range(res.batch.size):
             res_b = res[{"batch": batch_ind}]

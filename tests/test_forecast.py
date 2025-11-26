@@ -31,7 +31,8 @@ def test_direct_forecast_loader(imerg_training_data_1):
         ),
         n_steps=4,
         batch_size=2,
-        observation_layers=16
+        observation_layers=16,
+        full_climatology=True
     )
     assert len(ds) == 4
 
@@ -99,7 +100,8 @@ def test_autoregressive_forecast_loader(imerg_training_data_1):
             np.timedelta64(3, "h")
         ),
         n_steps=4,
-        batch_size=2
+        batch_size=2,
+        full_climatology=True
     )
     assert len(ds) == 1
 
@@ -179,7 +181,8 @@ def test_run_direct_forecast(imerg_training_data_1, tmp_path):
             np.timedelta64(3, "h")
         ),
         n_steps=4,
-        batch_size=2
+        batch_size=2,
+        full_climatology=True
     )
     data_loader = DataLoader(
         data_loader,
@@ -241,7 +244,8 @@ def test_run_autoregressive_forecast(imerg_training_data_1, tmp_path):
             np.timedelta64(3, "h")
         ),
         n_steps=4,
-        batch_size=2
+        batch_size=2,
+        full_climatology=True
     )
     data_loader = DataLoader(
         data_loader,
