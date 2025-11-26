@@ -553,7 +553,7 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
                 targets_s = self.load_wtcm_data(self.training_data_path / output_file)
                 targets_s = {name: transform(tnsr) for name, tnsr in targets_s.items()}
             else:
-                targets_s.append({
+                targets_s = {
                     "u10": torch.nan * torch.zeros((1, 360, 576)),
                     "v10": torch.nan * torch.zeros((1, 360, 576))
                 })
