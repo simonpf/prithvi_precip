@@ -507,7 +507,6 @@ class DirectPrecipForecastDataset(MERRAInputData):
             return self.load_data(ind, roll, flip_v=flip_v, flip_h=flip_h, scale=scale)
 
         except Exception as exc:
-            raise exc
             LOGGER.exception(
                 "Encountered an error when load training sample %s. Falling back to another "
                 " randomly-chosen sample.",

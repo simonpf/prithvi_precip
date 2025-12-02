@@ -293,13 +293,16 @@ class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
         Return:
             A dictionary containing the target names and corresponding tensors.
         """
-        with xr.open_dataset(self.training_data_path / output_file) as data:
-            mu10 = data["mu10"].data[0]
-            mv10 = data["mv10"].data[0]
+        with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
+            mu10 = data["mu10"].data[0].copy()
+            mv10 = data["mv10"].data[0].copy()
+            vmax = data["vmax_nan"].data[0].copy()
             target = {
                 "u10": torch.tensor(mu10),
                 "v10": torch.tensor(mv10),
+                "vmax": torch.tensor(vmax),
             }
+        del data
         return target
 
     def load_data(
@@ -381,6 +384,15 @@ class DirectWTCMForecastDataset(DirectPrecipForecastDataset):
                 x["climate"] += noise * d_x
 
         target = self.load_wtcm_data(output_file)
+        any_valid = False
+        for tnsr in target.values():
+            any_valid = any_valid or torch.isfinite(tnsr).any()
+
+        if not any_valid:
+            print("No valid input in forecast @", input_times[-1])
+            new_index = self.rng.integers(0, len(self))
+            return self[new_index]
+
 
         if self.augment and output_ind < (len(self.output_files) - 1):
             next_time = self.output_times[output_ind + 1]
@@ -573,6 +585,14 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
 
         if 0 < len(climates):
             x["climate"] = transform(torch.stack(climates, 0))
+
+        any_valid_u10 = any([torch.isfinite(tnsr).any() for tnsr in targets["u10"]])
+        any_valid_v10 = any([torch.isfinite(tnsr).any() for tnsr in targets["v10"]])
+
+        if (not any_valid_u10) or (not any_valid_v10):
+            print("No valid input in forecast @", input_times[-1])
+            new_index = self.rng.integers(0, len(self))
+            return self[new_index]
 
         #x, targets = _transform_data(x, targets, roll, flip)
         return x, targets
