@@ -567,7 +567,8 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
             else:
                 targets_s = {
                     "u10": torch.nan * torch.zeros((1, 360, 576)),
-                    "v10": torch.nan * torch.zeros((1, 360, 576))
+                    "v10": torch.nan * torch.zeros((1, 360, 576)),
+                    "vmax": torch.nan * torch.zeros((1, 360, 576))
                 }
 
             if output_time in self.input_times:
