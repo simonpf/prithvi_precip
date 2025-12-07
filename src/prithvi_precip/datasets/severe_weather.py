@@ -6,7 +6,7 @@ Provides datasets for training severe weather forecasts.
 """
 
 from datetime import datetime
-from functools import cached_property, partial
+from functools import cache, cached_property, partial
 import logging
 from math import trunc
 import os
@@ -35,6 +35,14 @@ from ..utils import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@cache
+def get_severe_weather_mask() -> xr.Dataset:
+    """
+    A mask identifying the valid domain of the training data.
+    """
+    return xr.load_dataset(Path(__file__).parent / "severe_weather_mask.nc").mask.data
 
 
 class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
@@ -256,12 +264,16 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             hail[mask] = torch.nan
             wind[mask] = torch.nan
 
-            severe = np.minimum(tornado.numpy() + hail.numpy() + wind.numpy(), 1.0)
+            severe = tornado + wind + hail
             target = {
-                "tornado": tornado,
-                "hail": hail,
-                "wind": wind,
-                "severe": torch.tensor(severe),
+                "tornado": torch.clip(tornado, 0.0, 1.0),
+                "tornado_weights": torch.maximum(tornado, torch.tensor(1.0)),
+                "hail": torch.clip(hail, 0.0, 1.0),
+                "hail_weights": torch.maximum(hail, torch.tensor(1.0)),
+                "wind": torch.clip(wind, 0.0, 1.0),
+                "wind_weights": torch.maximum(wind, torch.tensor(1.0)),
+                "severe": torch.clip(severe, 0.0, 1.0),
+                "severe_weights": torch.maximum(severe, torch.tensor(1.0)),
             }
         return target
 
