@@ -587,10 +587,12 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
         if 0 < len(climates):
             x["climate"] = transform(torch.stack(climates, 0))
 
+        any_valid_y = any([torch.isfinite(tnsr).any() for tnsr in targets["y"]])
         any_valid_u10 = any([torch.isfinite(tnsr).any() for tnsr in targets["u10"]])
         any_valid_v10 = any([torch.isfinite(tnsr).any() for tnsr in targets["v10"]])
+        any_valid_vmax = any([torch.isfinite(tnsr).any() for tnsr in targets["vmax"]])
 
-        if (not any_valid_u10) or (not any_valid_v10):
+        if (not any_valid_y) or (not any_valid_u10) or (not any_valid_v10) or (not any_valid_vmax):
             print("No valid input in forecast @", input_times[-1])
             new_index = self.rng.integers(0, len(self))
             return self[new_index]
