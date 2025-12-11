@@ -579,7 +579,7 @@ class AutoregressiveWTCMForecastDataset(DirectWTCMForecastDataset):
                 y = y / self.output_sig
                 targets_s["y"] = transform(y)
             else:
-                targets_s["y"] = torch.nan * torch.zeros_like(climates[-1])
+                targets_s["y"] = transform(torch.nan * torch.zeros_like(climates[-1]))
 
             for key, tnsr in targets_s.items():
                 targets.setdefault(key, []).append(tnsr)
