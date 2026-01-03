@@ -55,7 +55,7 @@ def extract_imerg_precip(
     output_path = Path(output_path)
 
     start_time = datetime(year, month, day, minute=1) - timedelta(days=accumulate)
-    end_time = start_time + timedelta(hours=23, minutes=59) + timedelta(days=accumulate)
+    end_time = datetime(year, month, day, hour=23, minute=59) + timedelta(days=accumulate)
     time_range = TimeRange(start_time, end_time)
 
     recs = l3b_day_3imerg_ms_mrg_v07b.get(time_range)
