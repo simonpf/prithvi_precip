@@ -80,6 +80,7 @@ class DirectForecastLoader:
         if observation_layers is not None:
             self.obs_loader = ObservationLoader(
                 Path(input_data_path) / "obs",
+                observation_layers=observation_layers,
                 n_tiles=n_tiles,
                 tile_size=tile_size
             )
@@ -180,7 +181,7 @@ class DirectForecastLoader:
                 obs_meta.append(meta_t)
 
             obs = torch.stack(obs, 0)
-            obs_mask = torch.zeros_like(obs) #obs < -2.9
+            obs_mask = obs < -1.4
             obs = torch.nan_to_num(obs, nan=-3.0)
             obs_meta = torch.stack(obs_meta, 0)
 

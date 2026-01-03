@@ -19,7 +19,11 @@ from filelock import FileLock
 from scipy.constants import speed_of_light
 import numpy as np
 from pansat.file_record import FileRecord
-from pansat.products.satellite.goes import GOES19L1BRadiances
+from pansat.products.satellite.goes import (
+    GOES16L1BRadiances,
+    GOES18L1BRadiances,
+    GOES19L1BRadiances
+)
 from pansat.time import to_datetime64, TimeRange
 from rich.progress import Progress
 import xarray as xr
@@ -47,7 +51,11 @@ WAVELENGTHS = {
     16: 13.3,
 }
 
-GOES_PRODUCTS = [GOES19L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS]
+GOES_PRODUCTS = {
+    16: [GOES16L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
+    18: [GOES18L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
+    19: [GOES19L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
+}
 
 
 def extract_observations(
@@ -166,7 +174,8 @@ def extract_observations_day(
         output_path: Path,
         domain: str,
         tile_dims: Tuple[int, int] = (30, 32),
-        interval: int = 3
+        interval: int = 3,
+        series: int = 19
 ):
     """
     Extract observation data from all CPCIR files for a given day.
@@ -185,7 +194,7 @@ def extract_observations_day(
         end = datetime(year, month, day, hour) + timedelta(minutes=5)
 
         files = []
-        for prod in GOES_PRODUCTS:
+        for prod in GOES_PRODUCTS[series]:
             recs = prod.get(TimeRange(start, end))
             if len(recs) > 0:
                 files.append(recs[0].local_path)
@@ -205,6 +214,7 @@ def extract_observations_day(
 @click.option('--domain', type=str, default="MERRA")
 @click.option('--tile_dims', type=str, default="30,32")
 @click.option('--n_processes', type=int, default=1)
+@click.option('--series', type=int, default=19)
 @click.option(
     '--interval',
     type=int,
@@ -218,7 +228,8 @@ def extract_goes_observations(
         domain: str,
         tile_dims: Tuple[int, int] = (30, 32),
         n_processes: int = 1,
-        interval: int = 3
+        interval: int = 3,
+        series: int = 19
 ):
     """
     Extract GOES observations for given year and month.
@@ -232,13 +243,13 @@ def extract_goes_observations(
         return
 
     _, n_days = monthrange(year, month)
-    days = list(range(1, n_days + 1))
+    days = list(range(27, n_days + 1))
 
     tile_dims = tuple(map(int, tile_dims.split(",")))
 
     if n_processes > 1:
         LOGGER.info(f"[bold blue]Using {n_processes} processes for downloading data.[/bold blue]")
-        tasks = [(year, month, d, output_path, domain, tile_dims, interval) for d in days]
+        tasks = [(year, month, d, output_path, domain, tile_dims, interval, series) for d in days]
 
         with (
                 ProcessPoolExecutor(max_workers=n_processes) as executor,
@@ -261,7 +272,7 @@ def extract_goes_observations(
             task_id = progress.add_task("Extracting data:", total=len(days))
             for d in days:
                 try:
-                    extract_observations_day(year, month, d, output_path, domain, tile_dims, interval)
+                    extract_observations_day(year, month, d, output_path, domain, tile_dims, interval, series)
                 except Exception as e:
                     LOGGER.exception(f"Error processing day {d}: {e}")
                 finally:

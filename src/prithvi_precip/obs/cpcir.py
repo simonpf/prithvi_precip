@@ -227,7 +227,7 @@ def extract_cpcir_observations(
         return
 
     _, n_days = monthrange(year, month)
-    days = list(range(1, n_days + 1))
+    days = (9, 12)#list(range(1, n_days + 1))
 
     tile_dims = tuple(map(int, tile_dims.split(",")))
 
