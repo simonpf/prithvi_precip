@@ -228,9 +228,11 @@ def download_geos_forecast(
             return None
         with xr.open_dataset(rec.local_path) as data:
             data = data[["PRECTOT"]].compute().rename({
+                "PRECTOT": "surface_precip",
                 "lon": "longitude",
                 "lat": "latitude"
             })
+            data["surface_precip"].data *= 3.6e3
             data = data.coarsen({"longitude": 2}).mean()
             data_n = data[{"latitude": 720}]
             data = data[{"latitude": slice(0, -1)}].coarsen({"latitude": 2}).mean()
