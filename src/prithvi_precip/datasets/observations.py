@@ -254,18 +254,28 @@ class ObservationLoader(Dataset):
             stats = xr.load_dataset(stats_file)
         return stats
 
-    def get_observation_mask(self) -> xr.Dataset:
+    def get_observation_mask(
+            self,
+            start_time: np.datetime64,
+            end_time: np.datetime64,
+            step: np.timedelta64 = np.timedelta64(3, "h")
+    ) -> xr.Dataset:
         """
         Calculate an xarray.Dataset indicating the availability of different observations.
+
+        Args:
+            start_time: The beginning of the time interval during which to look for observations.
+            end_time: The end of the time interval.
+
+        Return:
+            An xarray dataset
         """
+        from tqdm import tqdm
         stats = self.stats_data
         all_vars = stats.attrs["variables"].split(",")
         n_vars = len(all_vars)
 
-        start_time = self.start_time
-        end_time = self.end_time
-
-        times = np.arange(start_time, end_time + np.timedelta64(3, "h"), np.timedelta64(3, "h"))
+        times = np.arange(start_time, end_time + np.timedelta64(3, "h"), step)
         obs_times = []
         obs_tiles = []
         obs_bins = np.arange(n_vars + 1) - 0.5
@@ -284,14 +294,14 @@ class ObservationLoader(Dataset):
                                 tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
                                 if tilename in obs_data:
                                     obs_ids = obs_data[tilename].data
+                                    obs_ids[obs_ids < 0] += 256
                                     obs_tiles[-1][:, meridional_index, zonal_index] += np.histogram(obs_ids, bins=obs_bins)[0]
                 except Exception as exc:
-                    raise exc
-
                     LOGGER.exception(
                         "Encountered an error when observation file %s.",
                         path
                     )
+                    path.unlink()
 
         platforms = []
         sensors = []
@@ -342,6 +352,8 @@ class ObservationLoader(Dataset):
                 for zonal_index in range(self.n_tiles[1]):
                     tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
                     if tilename in obs_data:
+                        obs_ids_tile = obs_data[tilename].data.astype(np.int64)
+                        obs_ids_tile[obs_ids_tile < 0] += 256
                         obs_ids += list(obs_data[tilename].data)
 
         obs_ids = set(obs_ids)
@@ -378,7 +390,8 @@ class ObservationLoader(Dataset):
                     obs_name = f"observations_{meridional_index:02}_{zonal_index:02}"
                     if obs_id_name not in obs_data:
                         continue
-                    obs_ids = obs_data[obs_id_name].data
+                    obs_ids = obs_data[obs_id_name].data.astype(np.int64)
+                    obs_ids[obs_ids < 0] += 256
                     if obs_id in obs_ids:
                         obs_ind = list(obs_ids).index(obs_id)
                         observations[meridional_index, zonal_index, :, :] = obs_data[obs_name].data[obs_ind]
@@ -448,6 +461,8 @@ class ObservationLoader(Dataset):
                     if self.obs_regexp is not None:
                         obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                         obs_ids = data[obs_ids].data
+                        obs_ids[obs_ids < 0] += 256
+                        names = [self.obs_vars[obs_id] for obs_id in obs_ids if self.obs_regexp.match(self.obs_vars[obs_id])]
                         inds = [ind for ind, obs_id in enumerate(obs_ids) if self.obs_regexp.match(self.obs_vars[obs_id])]
                         inds = np.array(inds)
                         if len(inds) == 0:
