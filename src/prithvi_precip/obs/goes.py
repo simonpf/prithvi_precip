@@ -21,6 +21,7 @@ import numpy as np
 from pansat.file_record import FileRecord
 from pansat.products.satellite.goes import (
     GOES16L1BRadiances,
+    GOES17L1BRadiances,
     GOES18L1BRadiances,
     GOES19L1BRadiances
 )
@@ -53,6 +54,7 @@ WAVELENGTHS = {
 
 GOES_PRODUCTS = {
     16: [GOES16L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
+    17: [GOES17L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
     18: [GOES18L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
     19: [GOES19L1BRadiances("F", [ch_ind]) for ch_ind in CHANNELS],
 }
