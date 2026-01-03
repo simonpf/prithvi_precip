@@ -245,7 +245,7 @@ def extract_goes_observations(
         return
 
     _, n_days = monthrange(year, month)
-    days = list(range(27, n_days + 1))
+    days = list(range(1, n_days + 1))
 
     tile_dims = tuple(map(int, tile_dims.split(",")))
 
