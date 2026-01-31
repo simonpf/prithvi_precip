@@ -585,10 +585,10 @@ class ObsDatasetBase():
                 obs_t = []
                 meta_t = []
                 n_steps = input_time // 3
-                for step in range(0, input_time, 3):
+                for step in range(-input_time + 3, 1, 3):
                     obs_s, meta_s = self.obs_loader.load_observations(
-                        time,
-                        offset=step // 3 - n_steps,
+                        time + np.timedelta64(step, "h"),
+                        offset=step // 3,
                         roll=roll,
                         flip_v=flip_v,
                         flip_h=flip_h,
