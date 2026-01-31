@@ -505,7 +505,7 @@ class ObservationLoader(Dataset):
                     meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
                     meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
                 except Exception as exc:
-                    LOGGER.warning(
+                    LOGGER.exception(
                         "Encountered an error when loading observations for tile [%s, %s] from file '%s'.",
                         row_ind, col_ind, path
                     )
@@ -531,6 +531,7 @@ class ObsDatasetBase():
     def __init__(
             self,
             training_data_path: Path,
+            observation_layers: int = 32,
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
     ):
@@ -539,7 +540,7 @@ class ObsDatasetBase():
             training_data_path / "obs",
             n_tiles=n_tiles,
             tile_size=tile_size,
-            observation_layers=32
+            observation_layers=observation_layers
         )
 
         if self.local_data:
@@ -579,17 +580,24 @@ class ObsDatasetBase():
             input_times = [self.input_times[ind] for ind in self.input_indices[ind]]
             obs = []
             meta = []
+            input_time = int(x["input_time"].item())
             for time_ind, time in enumerate(input_times):
-                obs_t, meta_t = self.obs_loader.load_observations(
-                    time,
-                    offset=len(input_times) - time_ind - 1,
-                    roll=roll,
-                    flip_v=flip_v,
-                    flip_h=flip_h,
-                    scale=scale
-                )
-                obs.append(obs_t)
-                meta.append(meta_t)
+                obs_t = []
+                meta_t = []
+                n_steps = input_time // 3
+                for step in range(0, input_time, 3):
+                    obs_s, meta_s = self.obs_loader.load_observations(
+                        time,
+                        offset=step // 3 - n_steps,
+                        roll=roll,
+                        flip_v=flip_v,
+                        flip_h=flip_h,
+                        scale=scale
+                    )
+                    obs_t.append(obs_s)
+                    meta_t.append(meta_s)
+                obs.append(torch.cat(obs_t, 2))
+                meta.append(torch.cat(meta_t, 2))
             obs = torch.stack(obs, 0)
             obs_mask = obs < -1.4
             obs = torch.nan_to_num(obs, nan=-1.5)
@@ -613,7 +621,6 @@ class ObsDatasetBase():
         return x, y
 
 
-
 class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDataset):
     """
     A PyTorch Dataset for loading precipitation forecast training data with global satellite
@@ -634,6 +641,7 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
             local_data: Optional[Path] = None,
             augment: bool = False,
             source: str = "merra2",
+            observation_layers: int = 32,
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
     ):
@@ -654,6 +662,7 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
                 typically be node-local memory that can be accessed rapidly.
             augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
             source: The source of the input data: 'merra2' or 'geos'
+            observation_layers: The number of observation layers to load.
             n_tiles: The number of global observations tiles.
             tile_size: The size of each tile.
         """
@@ -673,7 +682,13 @@ class DirectPrecipForecastWithObsDataset(ObsDatasetBase, DirectPrecipForecastDat
             augment=augment,
             source=source,
         )
-        ObsDatasetBase.__init__(self, training_data_path, n_tiles, tile_size)
+        ObsDatasetBase.__init__(
+            self,
+            training_data_path,
+            observation_layers=observation_layers,
+            n_tiles=n_tiles,
+            tile_size=tile_size
+        )
 
 
 class AutoregressivePrecipForecastWithObsDataset(ObsDatasetBase, AutoregressivePrecipForecastDataset):
@@ -697,6 +712,7 @@ class AutoregressivePrecipForecastWithObsDataset(ObsDatasetBase, AutoregressiveP
             local_data: Optional[Path] = None,
             augment: bool = False,
             source: str = "merra2",
+            observation_layers: int = 32,
             n_tiles: Tuple[int, int] = (12, 18),
             tile_size: Tuple[int, int] = (30, 32),
     ):
@@ -718,6 +734,7 @@ class AutoregressivePrecipForecastWithObsDataset(ObsDatasetBase, AutoregressiveP
                 typically be node-local memory that can be accessed rapidly.
             augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
             source: Name of the input dataset.
+            observation_layers: The number of observation layers to load.
             n_tiles: The number of global observations tiles.
             tile_size: The size of each tile.
         """
@@ -738,4 +755,10 @@ class AutoregressivePrecipForecastWithObsDataset(ObsDatasetBase, AutoregressiveP
             augment=augment,
             source=source,
         )
-        ObsDatasetBase.__init__(self, training_data_path, n_tiles, tile_size)
+        ObsDatasetBase.__init__(
+            self,
+            training_data_path,
+            n_tiles=n_tiles,
+            tile_size=tile_size,
+            observation_layers=observation_layers
+        )
