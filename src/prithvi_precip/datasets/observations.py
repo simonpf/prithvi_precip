@@ -251,7 +251,9 @@ class ObservationLoader(Dataset):
         stats_file = self.observation_path / "stats.nc"
         lock_file = FileLock(stats_file.with_suffix(".lock"))
         with lock_file:
-            stats = xr.load_dataset(stats_file)
+            with xr.open_dataset(stats_file, engine="h5netcdf", chunks=None, cache=False) as data:
+                stats = data.load()
+            del data
         return stats
 
     def get_observation_mask(
@@ -285,7 +287,7 @@ class ObservationLoader(Dataset):
             path = self.observation_path / date.strftime("%Y/%m/%d/obs_%Y%m%d%H%M%S.nc")
             if path.exists():
                 try:
-                    with xr.open_dataset(path) as obs_data:
+                    with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as obs_data:
                         obs_times.append(time)
                         obs_tiles.append(np.zeros((obs_bins.size - 1,) + self.n_tiles))
 
@@ -347,7 +349,7 @@ class ObservationLoader(Dataset):
 
         obs_ids = []
 
-        with xr.open_dataset(path) as obs_data:
+        with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as obs_data:
             for meridional_index in range(self.n_tiles[0]):
                 for zonal_index in range(self.n_tiles[1]):
                     tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
@@ -383,7 +385,7 @@ class ObservationLoader(Dataset):
         obs_ids = []
         observations = np.nan * np.ones(self.n_tiles + self.tile_size)
 
-        with xr.open_dataset(path) as obs_data:
+        with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as obs_data:
             for meridional_index in range(self.n_tiles[0]):
                 for zonal_index in range(self.n_tiles[1]):
                     obs_id_name = f"obs_id_{meridional_index:02}_{zonal_index:02}"
@@ -443,72 +445,75 @@ class ObservationLoader(Dataset):
 
         layer_ind = np.zeros(self.n_tiles, dtype=np.int64)
 
+        data = None
         try:
-            data = xr.load_dataset(path)
+            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
+
+                for row_ind in range(self.n_tiles[0]):
+                    for col_ind in range(self.n_tiles[1]):
+
+                        obs_name = f"observations_{row_ind:02}_{col_ind:02}"
+                        if obs_name not in data:
+                            continue
+
+                        try:
+                            obs = data[obs_name].data
+
+                            if self.obs_regexp is not None:
+                                obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
+                                obs_ids = data[obs_ids].data
+                                obs_ids[obs_ids < 0] += 256
+                                names = [self.obs_vars[obs_id] for obs_id in obs_ids if self.obs_regexp.match(self.obs_vars[obs_id])]
+                                inds = [ind for ind, obs_id in enumerate(obs_ids) if self.obs_regexp.match(self.obs_vars[obs_id])]
+                                inds = np.array(inds)
+                                if len(inds) == 0:
+                                    continue
+                            else:
+                                if randomize:
+                                    inds = np.random.permutation(obs.shape[0])
+                                else:
+                                    inds = np.arange(obs.shape[0])
+
+                            tiles = min(obs.shape[0], self.observation_layers, len(inds))
+
+                            obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
+                            obs_ids = data[obs_ids].data[inds[:tiles]]
+
+                            minmax = np.array([self.get_minmax(obs_id) for obs_id in obs_ids])
+                            minmax = minmax[..., None, None]
+
+                            obs = obs[inds[:tiles]]
+                            invalid = np.isnan(obs)
+                            obs_n = -1.0 + 2.0 * (obs - minmax[:, 0]) / (minmax[:, 1] - minmax[:, 0])
+                            obs_n[invalid] = -1.5
+                            observations[row_ind, col_ind, :tiles, 0]  = torch.tensor(obs_n)
+
+                            freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]])
+                            freq = -1.0 + 2.0 * (freq - np.log10(self.freq_min)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
+                            offs = data[f"offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]
+                            offs = np.minimum(offs, 10) / 10
+                            pol = torch.nn.functional.one_hot(
+                                torch.tensor(data[f"polarization_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]).to(dtype=torch.int64),
+                                num_classes=5
+                            )
+
+                            time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]] / 180.0
+                            if offset is not None:
+                                time_offset = time_offset + offset
+
+                            meta_data[row_ind, col_ind, :tiles, 0] = torch.tensor(freq)[..., None, None]
+                            meta_data[row_ind, col_ind, :tiles, 1] = torch.tensor(offs)[..., None, None]
+                            meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
+                            meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
+                        except Exception as exc:
+                            LOGGER.exception(
+                                "Encountered an error when loading observations for tile [%s, %s] from file '%s'.",
+                                row_ind, col_ind, path
+                            )
         except Exception:
             return observations, meta_data
-
-        for row_ind in range(self.n_tiles[0]):
-            for col_ind in range(self.n_tiles[1]):
-
-                obs_name = f"observations_{row_ind:02}_{col_ind:02}"
-                if obs_name not in data:
-                    continue
-
-                try:
-                    obs = data[obs_name].data
-
-                    if self.obs_regexp is not None:
-                        obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
-                        obs_ids = data[obs_ids].data
-                        obs_ids[obs_ids < 0] += 256
-                        names = [self.obs_vars[obs_id] for obs_id in obs_ids if self.obs_regexp.match(self.obs_vars[obs_id])]
-                        inds = [ind for ind, obs_id in enumerate(obs_ids) if self.obs_regexp.match(self.obs_vars[obs_id])]
-                        inds = np.array(inds)
-                        if len(inds) == 0:
-                            continue
-                    else:
-                        if randomize:
-                            inds = np.random.permutation(obs.shape[0])
-                        else:
-                            inds = np.arange(obs.shape[0])
-
-                    tiles = min(obs.shape[0], self.observation_layers, len(inds))
-
-                    obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
-                    obs_ids = data[obs_ids].data[inds[:tiles]]
-
-                    minmax = np.array([self.get_minmax(obs_id) for obs_id in obs_ids])
-                    minmax = minmax[..., None, None]
-
-                    obs = obs[inds[:tiles]]
-                    invalid = np.isnan(obs)
-                    obs_n = -1.0 + 2.0 * (obs - minmax[:, 0]) / (minmax[:, 1] - minmax[:, 0])
-                    obs_n[invalid] = -1.5
-                    observations[row_ind, col_ind, :tiles, 0]  = torch.tensor(obs_n)
-
-                    freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]])
-                    freq = -1.0 + 2.0 * (freq - np.log10(self.freq_min)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
-                    offs = data[f"offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]
-                    offs = np.minimum(offs, 10) / 10
-                    pol = torch.nn.functional.one_hot(
-                        torch.tensor(data[f"polarization_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]).to(dtype=torch.int64),
-                        num_classes=5
-                    )
-
-                    time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]] / 180.0
-                    if offset is not None:
-                        time_offset = time_offset + offset
-
-                    meta_data[row_ind, col_ind, :tiles, 0] = torch.tensor(freq)[..., None, None]
-                    meta_data[row_ind, col_ind, :tiles, 1] = torch.tensor(offs)[..., None, None]
-                    meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
-                    meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
-                except Exception as exc:
-                    LOGGER.exception(
-                        "Encountered an error when loading observations for tile [%s, %s] from file '%s'.",
-                        row_ind, col_ind, path
-                    )
+        finally:
+            del data
 
         observations = torch.nan_to_num(observations, nan=-1.5)
         meta_data = torch.nan_to_num(meta_data, nan=-1.5)
