@@ -195,6 +195,10 @@ def extract_observations(
         sensor_lats = l1c_obs["spacecraft_latitude"].data
         sensor_alt = l1c_obs["spacecraft_altitude"].data * 1e3
 
+        if sensor_lons.shape[0] == 0:
+            swath_ind += 1
+            continue
+
         zoom_factor = fp_lons.shape[0] / sensor_lons.shape[0]
         if zoom_factor > 1:
             sensor_lons = zoom(sensor_lons, zoom_factor)
@@ -423,7 +427,7 @@ def process_sensor_data(
         return
 
     _, n_days = monthrange(year, month)
-    days = list(range(1, n_days + 1))
+    days = [4]#list(range(1, n_days + 1))
 
     tile_dims = tuple(map(int, tile_dims.split(",")))
 

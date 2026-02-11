@@ -91,6 +91,8 @@ def post_process_results(
 
 # Adapt this to run forecast for longer time range.
 init_times = np.arange(
+    START_TIME,
+    END_TIME,
     np.timedelta64(6, "h")
 )
 

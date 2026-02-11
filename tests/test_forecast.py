@@ -34,7 +34,7 @@ def test_direct_forecast_loader(imerg_training_data_1):
         observation_layers=16,
         full_climatology=True
     )
-    assert len(ds) == 4
+    assert len(ds) == 6
 
     init_time, valid_times, input_data = ds[0]
     assert init_time == np.datetime64("2020-01-01T03:00:00")
@@ -71,7 +71,6 @@ def test_direct_forecast_loader(imerg_training_data_1):
     assert -1.5 in vals
     assert (-1.0 + 2.0 * 1 / 300.0) in vals
 
-
     # Dynamic input should be init time and previous timestep.
     assert torch.isclose(input_data["x"][:, 0, :20], torch.tensor(1.0)).all()
     assert torch.isclose(input_data["x"][:, 0, 20:], torch.tensor(0.0)).all()
@@ -86,6 +85,11 @@ def test_direct_forecast_loader(imerg_training_data_1):
 
     assert (torch.isclose(input_data["lead_time"], torch.tensor([3.0, 6.0]))).all()
     assert (torch.isclose(input_data["input_time"], torch.tensor(3.0))).all()
+
+    init_time, valid_times, input_data = ds[2]
+    assert init_time is None
+    assert valid_times is None
+    assert input_data is None
 
 
 def test_autoregressive_forecast_loader(imerg_training_data_1):
@@ -188,7 +192,8 @@ def test_run_direct_forecast(imerg_training_data_1, tmp_path):
         data_loader,
         batch_size=None,
         num_workers=2,
-        collate_fn=lambda x: x
+        collate_fn=lambda x: x,
+        shuffle=False
     )
 
     run_direct_forecast(

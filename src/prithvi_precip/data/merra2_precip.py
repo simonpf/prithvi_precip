@@ -62,6 +62,7 @@ def extract_merra_precip(
     for rec in merra_recs:
         with xr.open_dataset(rec.local_path) as data:
             data = data[["PRECTOT"]].load().rename(PRECTOT="surface_precip")
+            data = data.rename_dims(lat="latitude", lon="longitude").rename(lat="latitude", lon="longitude")
             data["surface_precip"].data *= 3.6e3
             all_data.append(data)
 
@@ -71,7 +72,7 @@ def extract_merra_precip(
 
     data = xr.concat(all_data, "time").sortby("time")
     lons, lats = get_lonlats(domain)
-    data = data.interp(lon=lons[0], lat=lats[..., 0])
+    data = data.interp(longitude=lons[0], latitude=lats[..., 0])
 
     if 1 < accumulate:
         time_shifted = data.time[:-(accumulate - 1)]

@@ -7,9 +7,10 @@ Functionality to evaluate multiple forecasts.
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -67,9 +68,10 @@ class Evaluator:
 
         all_times = set.intersection(set(self.reference_files), *[set(times) for times in self.result_files.values()])
         self.all_times = sorted(list(all_times))
+        self.ref_times = sorted(list(self.reference_files))
         self.min_rqi = min_rqi
 
-        self._metric_classes = [Bias, MSE, CorrelationCoef, CRPS]#, SEEPS]
+        self._metric_classes = [Bias, MSE, CorrelationCoef, CRPS, SEEPS]
         self._metrics = {}
 
     def __len__(self) -> int:
@@ -116,80 +118,95 @@ class Evaluator:
         lead times.
         """
         for time in tqdm(np.random.permutation(self.all_times), desc="Evaluating forecasts"):
+            try:
+                results_ref = xr.load_dataset(next(iter(self.reference_files.values())))
+                sp_ref_persist = results_ref.surface_precip.data
+                lat_mask = np.isfinite(sp_ref_persist).any(-1)
+                lon_mask = np.isfinite(sp_ref_persist).any(-2)
 
-            results_ref = xr.load_dataset(next(iter(self.reference_files.values())))
-            sp_ref_persist = results_ref.surface_precip.data
-            lat_mask = np.isfinite(sp_ref_persist).any(-1)
-            lon_mask = np.isfinite(sp_ref_persist).any(-2)
+                lons = results_ref.longitude.data[lon_mask]
+                lats = results_ref.latitude.data[lat_mask]
+                lons, lats = np.meshgrid(lons, lats)
 
-            lons = results_ref.longitude.data[lon_mask]
-            lats = results_ref.latitude.data[lat_mask]
-            lons, lats = np.meshgrid(lons, lats)
+                # Ensure all files can be opened.
+                for forecast in self.result_files:
+                    with xr.open_dataset(self.result_files[forecast][time]) as results:
+                        assert 0 <= results.valid_time.size
+                    results.close()
+                    del results
 
-            for forecast in self.result_files:
-                with xr.open_dataset(self.result_files[forecast][time]) as results:
-                    results = results[{"longitude": lon_mask, "latitude": lat_mask}].compute()
+                for forecast in self.result_files:
+                    with xr.open_dataset(self.result_files[forecast][time]) as results:
+                        results = results[{"longitude": lon_mask, "latitude": lat_mask}].compute()
 
-                    n_times = results.valid_time.size
-                    for ind in range(n_times):
+                        n_times = results.valid_time.size
+                        for ind in range(n_times):
 
-                        results_t = results[{"valid_time": ind}]
-                        valid_time = results.valid_time.data[ind].astype("datetime64[s]").item()
+                            results_t = results[{"valid_time": ind}].compute()
+                            valid_time = results.valid_time.data[ind].astype("datetime64[s]").item()
 
-                        if not valid_time in self.reference_files:
-                            LOGGER.warning(
-                                "No reference data for time %s.",
-                                valid_time
-                            )
-                            continue
+                            if not valid_time in self.reference_files:
+                                LOGGER.warning(
+                                    "No reference data for time %s.",
+                                    valid_time
+                                )
+                                continue
 
+                            with xr.open_dataset(self.reference_files[valid_time]) as data_ref:
+                                data_ref = data_ref[{"latitude": lat_mask, "longitude": lon_mask}].compute()
+                                sp_ref = data_ref.surface_precip.data
+                                if "radar_quality_index" in data_ref:
+                                    rqi = data_ref.radar_quality_index.data
+                                else:
+                                    rqi = np.ones_like(sp_ref)
+
+                                sp = results_t.surface_precip.data
+                                sp_ref[rqi < self.min_rqi] = np.nan
+                                sp_ref[np.isnan(sp)] = np.nan
+
+                                lead_time = (valid_time - time).total_seconds() // 3600
+                                if lead_time < 96:
+                                    metrics = self.get_metrics(forecast, lead_time)
+                                    for metric in metrics:
+                                        if isinstance(metric, ProbabilisticQuantificationMetric):
+                                            if "surface_precip_quantiles" in results_t:
+                                                sp_prob = results_t["surface_precip_quantiles"].data
+                                                tau = results_t["tau"].data
+                                                metric.update(lons, lats, to_datetime64(valid_time), sp_prob, sp_ref, taus=tau)
+                                            else:
+                                                metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+                                        #elif isinstance(metric, SEEPS):
+                                        #    #if "precip_class" in results_t:
+                                        #    #    precip_class = np.nan_to_num(results_t.precip_class.data, nan=-1.0)
+                                        #    #    metric.update(lons, lats, to_datetime64(valid_time), precip_class, sp_ref)
+                                        #    #else:
+                                        #    #    metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+                                        #    metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+                                        #else:
+                                        metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+
+                results_ref = xr.load_dataset(self.reference_files[time])
+                sp_ref_persist = results_ref.surface_precip.data
+                sp_ref_persist = sp_ref_persist[lat_mask][..., lon_mask]
+
+                # Persistence forecast
+                max_lead_time = self.max_lead_time
+                valid_time = time
+
+                while valid_time <= time + timedelta(hours=max_lead_time):
+                    if valid_time in self.reference_files:
                         with xr.open_dataset(self.reference_files[valid_time]) as data_ref:
                             data_ref = data_ref[{"latitude": lat_mask, "longitude": lon_mask}].compute()
                             sp_ref = data_ref.surface_precip.data
-                            if "radar_quality_index" in data_ref:
-                                rqi = data_ref.radar_quality_index.data
-                            else:
-                                rqi = np.ones_like(sp_ref)
 
-                            sp = results_t.surface_precip.data
-                            sp_ref[rqi < self.min_rqi] = np.nan
-                            sp_ref[np.isnan(sp)] = np.nan
-
-                            lead_time = (valid_time - time).total_seconds() // 3600
-                            if lead_time < 96:
-                                metrics = self.get_metrics(forecast, lead_time)
-                                for metric in metrics:
-                                    if isinstance(metric, ProbabilisticQuantificationMetric):
-                                        if "surface_precip_quantiles" in results_t:
-                                            sp_prob = results_t["surface_precip_quantiles"].data
-                                            tau = results_t["tau"].data
-                                            metric.update(lons, lats, sp_prob, sp_ref, taus=tau)
-                                        else:
-                                            metric.update(lons, lats, sp, sp_ref)
-                                    else:
-                                        metric.update(lons, lats, sp, sp_ref)
-
-
-            results_ref = xr.load_dataset(self.reference_files[time])
-            sp_ref_persist = results_ref.surface_precip.data
-            sp_ref_persist = sp_ref_persist[lat_mask][..., lon_mask]
-
-            # Persistence forecast
-            max_lead_time = self.max_lead_time
-            valid_time = time + timedelta(hours=1)
-
-            while valid_time <= time + timedelta(hours=max_lead_time):
-                if valid_time in self.reference_files:
-                    with xr.open_dataset(self.reference_files[valid_time]) as data_ref:
-                        data_ref = data_ref[{"latitude": lat_mask, "longitude": lon_mask}].compute()
-                        sp_ref = data_ref.surface_precip.data
-
-                    lead_time = (valid_time - time).total_seconds() // 3600
-                    metrics = self.get_metrics("persistence", lead_time)
-                    for metric in metrics:
-                        valid = np.isfinite(sp_ref_persist) * np.isfinite(sp_ref)
-                        metric.update(lons[valid], lats[valid], sp_ref_persist[valid], sp_ref[valid])
-                valid_time = valid_time + timedelta(hours=1)
+                        lead_time = (valid_time - time).total_seconds() // 3600
+                        metrics = self.get_metrics("persistence", lead_time)
+                        for metric in metrics:
+                            valid = np.isfinite(sp_ref_persist) * np.isfinite(sp_ref)
+                            metric.update(lons[valid], lats[valid], to_datetime64(valid_time), sp_ref_persist[valid], sp_ref[valid])
+                    valid_time = valid_time + timedelta(hours=1)
+            except Exception as exc:
+                LOGGER.exception("Encountered an error when evaluating forecasts initialized at %s:", time)
 
     def get_results(self) -> Dict[str, xr.Dataset]:
         """
@@ -250,16 +267,34 @@ class Evaluator:
             rqi = results_ref.radar_quality_index.data
         else:
             rqi = np.ones_like(sp_ref)
+
         lat_mask = np.isfinite(sp_ref).any(-1)
         lon_mask = np.isfinite(sp_ref).any(-2)
         sp_ref = sp_ref[..., lat_mask, :][..., lon_mask]
         rqi = rqi[..., lat_mask, :][..., lon_mask]
-        sp_ref[rqi < self.min_rqi] = np.nan
+        sp_ref[rqi < 0.5] = np.nan
         lons = results_ref.longitude.data[lon_mask]
         lats = results_ref.latitude.data[lat_mask]
 
+        seeps = SEEPS()
+        seeps.calculate_climatology(sorted(list(self.reference_files.values())))
+        clim = seeps.climatology
+        month = time.month
+        hour = time.hour
+        clim = clim.interp(month=month, hour=hour, longitude=lons, latitude=lats)
+
         sp_ref = np.maximum(sp_ref, 1e-3)
         m = axs[0].contourf(lons, lats, sp_ref, norm=norm, levels=levels, extend="both")
+
+        spt = clim.surface_precip_second_tercile.data
+        clss = np.zeros_like(sp_ref)
+        clss[sp_ref < seeps.dry_threshold] = 0
+        clss[seeps.dry_threshold <= sp_ref] = 1
+        clss[spt <= sp_ref] = 2
+        lvls = np.arange(3) + 0.5
+        axs[0].contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+
+        axs[0].scatter(-99.5, 30.02, marker="x", s=20, c="coral")
         axs[0].coastlines()
 
         for ind, (name, res) in enumerate(results.items()):
@@ -268,19 +303,189 @@ class Evaluator:
 
             sp = np.maximum(res.surface_precip.data[lat_mask][..., lon_mask], 1e-3)
             axs[ind + 1].contourf(lons, lats, sp, norm=m.norm, levels=levels, extend="both")
+            axs[ind + 1].scatter(-99.5, 30.02, marker="x", s=20, c="coral")
+            if "precip_class" in res:
+                clss = res.precip_class.data[lat_mask][..., lon_mask]
+            else:
+                clss = np.zeros_like(sp)
+                clss[sp < seeps.dry_threshold] = 0
+                clss[seeps.dry_threshold <= sp] = 1
+                clss[spt <= sp] = 2
+            lvls = np.arange(3) + 0.5
+            axs[ind + 1].contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+
+            #axs[ind + 1].contour(lons, lats, sp_ref, norm=m.norm, levels=levels, colors="w")
             valid = np.isfinite(sp) * np.isfinite(sp_ref)
 
             bias = 100 * (sp[valid] - sp_ref[valid]).mean() / sp_ref[valid].mean()
             corr = np.corrcoef(sp[valid], sp_ref[valid])[0, 1]
             rmse = np.sqrt(((sp[valid] - sp_ref[valid]) ** 2).mean())
             metrics = f"Bias:  {bias:.2f} %\nRMSE:  {rmse:.2f}\nCorr.: {corr:.2f}"
-            axs[ind + 1].text(60, 80, metrics, c="grey", ha="left", va="top")
+            axs[ind + 1].text(0.8, 0.9, metrics, c="grey", ha="left", va="top", transform=axs[ind + 1].transAxes)
             axs[ind + 1].coastlines()
 
         fig.suptitle(f"Forecasted precipitation at {valid_time} initialized at {time}.")
 
         cax = fig.add_subplot(gs[-1, :])
         plt.colorbar(m, label="Surface precip", cax=cax, orientation="horizontal")
+
+
+    def plot_forecast_evolution(
+            self,
+            index: int,
+            steps: Optional[List[int]] = None,
+            include_metrics: bool = False,
+            titles: Optional[List[str]] = None,
+            bounds: Optional[Tuple[float, float, float, float]] = None
+    ):
+        """
+        Plot forecast results for a give forecast step.
+
+        Args:
+            index: The sample index.
+            step: The forecast step to display.
+
+        Return:
+            The matplotlib figure containing the visualized results.
+        """
+        if titles is None:
+            titles = list(self.result_files.keys())
+
+        if steps is None:
+            steps = [28, 20, 12, 4]
+
+        n_fcst = len(self.result_files)
+        crs = ccrs.PlateCarree()
+
+        n_steps = len(steps)
+        gs = GridSpec(
+            n_steps + 2,
+            n_fcst + 1,
+            width_ratios=[0.05] + [1.0] * n_fcst,
+            height_ratios=[1.0] * (n_steps + 1) + [0.075],
+            wspace=0.05,
+            hspace=0.05,
+
+        )
+        fig = plt.figure(figsize=(n_fcst * 5, 3.0 * n_steps + 1 + 1))
+
+        valid_time = self.ref_times[index]
+
+        for step_ind, step in enumerate(steps):
+
+            results = {}
+            lead_time = timedelta(hours=3 * step)
+            init_time = valid_time - lead_time
+            norm = LogNorm(1e-1, 20)
+            levels = np.logspace(-1, 1, 11)
+
+            for fcst, res_files in self.result_files.items():
+                with xr.open_dataset(res_files[init_time]) as data:
+                    data = data.sel(valid_time=valid_time).compute()
+                results[fcst] = data
+
+            tax = fig.add_subplot(gs[step_ind, 0])
+            tax.set_axis_off()
+            tax.text(0, 0, s=f"Lead Time = {step * 3} h", rotation=90, ha="center", va="center")
+            tax.set_ylim(-2, 2)
+
+            for ind, (name, res) in enumerate(results.items()):
+
+                # Plot reference
+                if step_ind == 0:
+                    results_ref = xr.load_dataset(self.reference_files[valid_time])
+                    sp_ref = results_ref.surface_precip.data
+                    if "radar_quality_index" in results_ref:
+                        rqi = results_ref.radar_quality_index.data
+                    else:
+                        rqi = np.ones_like(sp_ref)
+
+                    lat_mask = np.isfinite(sp_ref).any(-1)
+                    lon_mask = np.isfinite(sp_ref).any(-2)
+                    sp_ref = sp_ref[..., lat_mask, :][..., lon_mask]
+                    rqi = rqi[..., lat_mask, :][..., lon_mask]
+                    sp_ref[rqi < 0.5] = np.nan
+                    lons = results_ref.longitude.data[lon_mask]
+                    lats = results_ref.latitude.data[lat_mask]
+
+                    seeps = SEEPS()
+                    seeps.calculate_climatology(sorted(list(self.reference_files.values())))
+                    clim = seeps.climatology
+                    hour = valid_time.hour
+                    clim = clim.interp(hour=hour, longitude=lons, latitude=lats)
+
+                    sp_ref = np.maximum(sp_ref, 1e-3)
+                    ax = fig.add_subplot(gs[-2, ind + 1], projection=crs)
+                    m = ax.contourf(lons, lats, sp_ref, norm=norm, levels=levels, extend="both")
+
+                    spt = clim.surface_precip_second_tercile.data
+                    #clss = np.zeros_like(sp_ref)
+                    #clss[sp_ref < seeps.dry_threshold] = 0
+                    #clss[seeps.dry_threshold <= sp_ref] = 1
+                    #clss[spt <= sp_ref] = 2
+                    #lvls = np.arange(3) + 0.5
+                    #ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+
+                    ax.scatter(-99.5, 30.02, marker="x", s=20, c="coral")
+                    ax.coastlines()
+                    ax.add_feature(cfeature.BORDERS)
+                    ax.add_feature(cfeature.STATES)
+
+                    if ind == 0:
+                        tax = fig.add_subplot(gs[-2, 0])
+                        tax.set_axis_off()
+                        tax.text(0, 0, s="Verification", rotation=90, ha="center", va="center")
+                        tax.set_ylim(-2, 2)
+
+                    if bounds is not None:
+                        lon_min, lat_min, lon_max, lat_max = bounds
+                        ax.set_xlim(lon_min, lon_max)
+                        ax.set_ylim(lat_min, lat_max)
+
+
+                ax = fig.add_subplot(gs[step_ind, ind + 1], projection=crs)
+                if step_ind == 0:
+                    ax.set_title(titles[ind], loc="center")
+
+                sp = np.maximum(res.surface_precip.data[lat_mask][..., lon_mask], 1e-3)
+                ax.contourf(lons, lats, sp, norm=m.norm, levels=levels, extend="both")
+                ax.scatter(-99.5, 30.02, marker="x", s=20, c="coral")
+                #if "precip_class" in res:
+                #    clss = res.precip_class.data[lat_mask][..., lon_mask]
+                #else:
+                #    clss = np.zeros_like(sp)
+                #    clss[sp < seeps.dry_threshold] = 0
+                #    clss[seeps.dry_threshold <= sp] = 1
+                #    clss[spt <= sp] = 2
+                #lvls = np.arange(3) + 0.5
+                #ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+
+                #axs[ind + 1].contour(lons, lats, sp_ref, norm=m.norm, levels=levels, colors="w")
+                valid = np.isfinite(sp) * np.isfinite(sp_ref)
+
+                bias = 100 * (sp[valid] - sp_ref[valid]).mean() / sp_ref[valid].mean()
+                corr = np.corrcoef(sp[valid], sp_ref[valid])[0, 1]
+                rmse = np.sqrt(((sp[valid] - sp_ref[valid]) ** 2).mean())
+                metrics = f"Bias:  {bias:.2f} %\nRMSE:  {rmse:.2f}\nCorr.: {corr:.2f}"
+                if include_metrics:
+                    ax.text(
+                        0.65, 0.1, metrics, c="coral", ha="left", va="bottom",
+                        transform=ax.transAxes, fontsize=15, fontweight="bold"
+                    )
+                ax.coastlines()
+                ax.add_feature(cfeature.BORDERS)
+                ax.add_feature(cfeature.STATES)
+
+                if bounds is not None:
+                    lon_min, lat_min, lon_max, lat_max = bounds
+                    ax.set_xlim(lon_min, lon_max)
+                    ax.set_ylim(lat_min, lat_max)
+
+
+            fig.suptitle(f"Forecasted Precipitation at {valid_time.strftime('%Y-%m-%d %H:%M')}", y=0.92)
+
+        cax = fig.add_subplot(gs[-1, 1:])
+        plt.colorbar(m, label="Surface Precip [mm h$^{-1}$]", cax=cax, orientation="horizontal")
 
 
     def animate_results(self, index: int, ref_name: str = None, names = None):
@@ -295,7 +500,7 @@ class Evaluator:
         """
         n_fcst = len(self.result_files)
 
-        gs = GridSpec(1, n_fcst + 2, width_ratios = [1.0] * (1 + n_fcst) + [0.1])
+        gs = GridSpec(1, n_fcst + 2, width_ratios = [1.0] * (1 + n_fcst) + [0.1], hspace=0.05, wspace=0.05)
         fig = plt.figure(figsize=(6 * (n_fcst + 1) + 1, 4))
         crs = ccrs.PlateCarree()
         axs = [fig.add_subplot(gs[0, ind], projection=crs) for ind in range(n_fcst + 1)]
@@ -465,8 +670,8 @@ class Evaluator:
 
         from matplotlib.gridspec import GridSpec
 
-        fig = plt.figure(figsize=(17, 4))
-        gs = GridSpec(1, 5, width_ratios=[1.0, 1.0, 1.0, 1.0, 0.3])
+        fig = plt.figure(figsize=(18, 5))
+        gs = GridSpec(2, 4, height_ratios=[1.0, 0.3])
 
         names = list(results.keys())
         if labels is None:
@@ -477,9 +682,11 @@ class Evaluator:
         for name, label in zip(names, labels):
             lead_time = results[name].lead_time
             handles += ax.plot(lead_time, results[name].nmse, label=label)
+        ax.set_title("(a) Normalized MSE")
         ax.set_xlabel("Lead time [h]")
         ax.set_ylabel("NMSE [%]")
         ax.set_xlim(0, 96)
+        ax.set_ylim(0, 150)
         ax.grid()
 
         ax = fig.add_subplot(gs[0, 1])
@@ -487,17 +694,22 @@ class Evaluator:
             lead_time = results[name].lead_time
             ax.plot(lead_time, results[name].correlation_coef, label=label)
         ax.set_xlim(0, 96)
+        ax.set_title("(b) Correlation Coefficient")
         ax.set_xlabel("Lead time [h]")
-        ax.set_ylabel("ACC")
+        ax.set_ylabel("Correlation Coef.")
+        ax.set_xlim(0, 96)
+        ax.set_ylim(0, 1)
         ax.grid()
 
         ax = fig.add_subplot(gs[0, 2])
         for name, label in zip(names, labels):
             lead_time = results[name].lead_time
-            ax.plot(lead_time, results[name].bias, label=label)
+            ax.plot(lead_time, results[name].seeps, label=label)
         ax.set_xlim(0, 96)
+        ax.set_title("(c) SEEPS")
         ax.set_xlabel("Lead time [h]")
         ax.set_ylabel("SEEPS")
+        ax.set_ylim(0, 1)
         ax.grid()
 
         ax = fig.add_subplot(gs[0, 3])
@@ -505,13 +717,15 @@ class Evaluator:
             lead_time = results[name].lead_time
             ax.plot(lead_time, results[name].crps, label=label)
         ax.set_xlim(0, 96)
+        ax.set_title("(d) CRPS")
         ax.set_xlabel("Lead time [h]")
         ax.set_ylabel("CRPS [mm h$^{-1}$]")
         ax.grid()
+        ax.set_ylim(0, 0.25)
 
-        ax = fig.add_subplot(gs[0, -1])
+        ax = fig.add_subplot(gs[1, 1:-1])
         ax.set_axis_off()
-        ax.legend(handles=handles, loc="center", frameon=False)
+        ax.legend(handles=handles, loc="center", frameon=False, ncol=len(labels))
 
         return fig
 

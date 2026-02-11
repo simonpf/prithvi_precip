@@ -4,8 +4,10 @@ prithvi_precip.forecast.runners
 
 Functions to drive forecasts across several inputs.
 """
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+import logging
 
 import numpy as np
 import torch
@@ -14,6 +16,9 @@ from tqdm import tqdm
 import xarray as xr
 
 from pytorch_retrieve.tensors import QuantileTensor, ProbabilityTensor, ClassificationTensor, DetectionTensor
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def get_prediction(tnsr: torch.Tensor) -> torch.Tensor:
@@ -99,41 +104,59 @@ def run_direct_forecast(
             an xarray.Dataset containing the results.
         forward_kwargs: Keyword arguments forwarded to the models forward method.
     """
-    model = model.to(device=device, dtype=dtype).eval()
-    results = []
+    model = model.to(device=device).eval()
 
     if forward_kwargs is None:
         forward_kwargs = {}
 
+    device = torch.device(device)
+    use_autocast = dtype in (torch.bfloat16, torch.float16)
+    autocast_ctx = (
+        torch.autocast(device_type=device.type, dtype=dtype) if use_autocast else nullcontext()
+    )
+
+    results = []
     for inpt in tqdm(iter(data_loader), total=len(data_loader)):
+        try:
+            init_time, valid_times, batch = inpt
 
-        init_time, valid_times, batch = inpt
-        batch = {
-            name: tnsr.to(device=device, dtype=dtype) for name, tnsr in batch.items()
-        }
+            # Save results when batch is empty.
+            if init_time is None:
+                init_time = results[-1].initialization_time.data
+                date = init_time.astype("datetime64[s]").item()
+                fname = date.strftime("forecast_%Y%m%d%H%M.nc")
+                output_file = Path(output_path) / fname
+                results = xr.concat(results, "valid_time").sortby("valid_time")
+                results.to_netcdf(output_file)
+                results = []
+                continue
 
-        with torch.no_grad():
-            res = post_process_fn(
-                batch,
-                model(batch, **forward_kwargs),
-                init_time,
-                valid_times
+            batch = {
+                name: tnsr.to(
+                    device=device,
+                    dtype=torch.float32 if use_autocast else dtype
+                ) for name, tnsr in batch.items()
+            }
+            with torch.inference_mode(), autocast_ctx:
+                res = post_process_fn(
+                    batch,
+                    model(batch, **forward_kwargs),
+                    init_time,
+                    valid_times
+                )
+                res = res.rename(batch="valid_time")
+                if "initialization_time" not in res:
+                    res["initialization_time"] = init_time
+                if "valid_time" not in res:
+                    res["valid_time"] = (("valid_time",), valid_times)
+                results.append(res)
+
+        except Exception as exc:
+            raise exc
+            LOGGER.exception(
+                "The forecast @ %s failed with the following error.",
+                init_time
             )
-            res = res.rename(batch="valid_time")
-            if "initialization_time" not in res:
-                res["initialization_time"] = init_time
-            if "valid_time" not in res:
-                res["valid_time"] = (("valid_time",), valid_times)
-
-        date = init_time.astype("datetime64[s]").item()
-        fname = date.strftime("forecast_%Y%m%d%H%M.nc")
-        output_file = Path(output_path) / fname
-        if output_file.exists():
-            existing = xr.load_dataset(output_file)
-            res = xr.concat([res, existing], "valid_time").sortby("valid_time")
-            res.to_netcdf(output_file)
-        else:
-            res.to_netcdf(output_file)
 
 
 def run_autoregressive_forecast(
@@ -142,6 +165,7 @@ def run_autoregressive_forecast(
         output_path: Path,
         dtype: torch.dtype = torch.float32,
         device: str = "cpu",
+        forward_kwargs: Optional[Dict[str, Any]] = None,
         post_process_fn: Callable[[Dict[str, Any]], xr.Dataset] = post_process_results
 ):
     """
@@ -156,24 +180,35 @@ def run_autoregressive_forecast(
         post_process_fn: A post-processing function to use to turn the raw model outputs into
             an xarray.Dataset containing the results.
     """
-    model = model.to(device=device, dtype=dtype).eval()
-    results = []
+    model = model.to(device=device).eval()
     output_path = Path(output_path)
+    if forward_kwargs is None:
+        forward_kwargs = {}
+
+    device = torch.device(device)
+    use_autocast = dtype in (torch.bfloat16, torch.float16)
+    autocast_ctx = (
+        torch.autocast(device_type=device.type, dtype=dtype) if use_autocast else nullcontext()
+    )
 
     for inpt in tqdm(iter(data_loader), total=len(data_loader)):
 
         init_times, valid_times, batch = inpt
         batch = {
-            name: tnsr.to(device=device, dtype=dtype) for name, tnsr in batch.items()
+            name: tnsr.to(
+                device=device,
+                dtype=torch.float32 if use_autocast else dtype
+            ) for name, tnsr in batch.items()
         }
-
-        with torch.no_grad():
+        with torch.inference_mode(), autocast_ctx:
             res = post_process_fn(
                 batch,
-                model(batch),
+                model(batch, **forward_kwargs),
                 init_times,
                 valid_times
-            ).rename(step="valid_time")
+            )
+            if "step" in res.dims:
+                res = res.rename(step="valid_time")
             if "valid_time" not in res:
                 res["valid_time"] = (("batch", "valid_time"), valid_times)
             if "initialization_time" not in res:

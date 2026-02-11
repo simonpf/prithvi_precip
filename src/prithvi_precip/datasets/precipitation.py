@@ -747,7 +747,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
         any_valid_y = any([torch.isfinite(tnsr).any() for tnsr in targets["y"]])
         any_valid_precip = any([torch.isfinite(tnsr).any() for tnsr in targets["surface_precip"]])
         if (not any_valid_y) or (not any_valid_precip):
-            print("No valid input in forecast @", input_times[-1])
+            LOGGER.info("No valid input in forecast %s.", input_times[-1])
             new_index = self.rng.integers(0, len(self))
             return self[new_index]
 

@@ -180,13 +180,13 @@ def load_and_interp_climatology(time: np.datetime64, data_dir: Path) -> np.ndarr
     data_sfc_l = []
     with xr.open_dataset(sfc_file_l, engine="h5netcdf", chunks=None, cache=False) as sfc_data:
         for var in SURFACE_VARS:
-            data_sfc_l.append(sfc_data[var].data.astype(np.float32))
+            data_sfc_l.append(sfc_data[var].data.copy().astype(np.float32))
     del sfc_data
     data_sfc_l = np.stack(data_sfc_l)
     data_sfc_r = []
     with xr.open_dataset(sfc_file_r, engine="h5netcdf", chunks=None, cache=False) as sfc_data:
         for var in SURFACE_VARS:
-            data_sfc_r.append(sfc_data[var].data.astype(np.float32))
+            data_sfc_r.append(sfc_data[var].data.copy().astype(np.float32))
     del sfc_data
     data_sfc_r = np.stack(data_sfc_r)
     if day_l < day_r:
@@ -198,18 +198,18 @@ def load_and_interp_climatology(time: np.datetime64, data_dir: Path) -> np.ndarr
 
     vert_file_l = data_dir / "climatology" / f"climate_vertical_doy{day_l:03}_hour{hod:02}.nc"
     data_vert_l = []
-    with xr.open_dataset(vert_file_l) as data_vert:
+    with xr.open_dataset(vert_file_l, engine="h5netcdf", chunks=None, cache=False) as data_vert:
         for var in VERTICAL_VARS:
-            data_vert_l.append(np.flip(data_vert[var].data.astype(np.float32), 0))
+            data_vert_l.append(np.flip(data_vert[var].data.copy().astype(np.float32), 0))
     del data_vert
     data_vert_l = np.stack(data_vert_l, 0)
     data_vert_l = data_vert_l.reshape(-1, *data_vert_l.shape[2:])
 
     vert_file_r = data_dir / "climatology" / f"climate_vertical_doy{day_r:03}_hour{hod:02}.nc"
     data_vert_r = []
-    with xr.open_dataset(vert_file_r) as data_vert:
+    with xr.open_dataset(vert_file_r, engine="h5netcdf", chunks=None, cache=False) as data_vert:
         for var in VERTICAL_VARS:
-            data_vert_r.append(np.flip(data_vert[var].data.astype(np.float32), 0))
+            data_vert_r.append(np.flip(data_vert[var].data.copy().astype(np.float32), 0))
     del data_vert
     data_vert_r = np.stack(data_vert_r, 0)
     data_vert_r = data_vert_r.reshape(-1, *data_vert_r.shape[2:])
@@ -332,9 +332,10 @@ def load_dynamic_input(path: Path, slcs: Optional[Dict[str, slice]] = None) -> t
         slcs = {}
     with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
         for var in SURFACE_VARS:
-            all_data.append(data[var].__getitem__(slcs).data[None].astype(np.float32))
+            all_data.append(data[var].__getitem__(slcs).data.copy()[None].astype(np.float32))
         for var in VERTICAL_VARS:
-            all_data.append(data[var].__getitem__(slcs).astype(np.float32))
+            all_data.append(data[var].__getitem__(slcs).copy().astype(np.float32))
+    del data
     all_data = torch.tensor(np.concatenate(all_data, axis=0))
     return all_data
 

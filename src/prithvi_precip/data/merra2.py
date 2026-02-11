@@ -287,8 +287,6 @@ def download_static(
         #assert len(prod_recs) == 1
         merra_recs += prod_recs
 
-    print("MERRA RECS :: ", merra_recs)
-
     vars_req = STATIC_SURFACE_VARS
 
     all_data = []

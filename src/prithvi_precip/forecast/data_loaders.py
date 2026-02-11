@@ -1,8 +1,8 @@
 """
-prithvi_precip.forecast
-=======================
+prithvi_precip.forecast.data_loaders
+====================================
 
-Functionality for running forecasts with the Prithvi Precip model.
+Provides data loader classes for loading the input data for direct and autoregressive forecasts.
 """
 from datetime import datetime
 from functools import partial
@@ -27,7 +27,7 @@ from ..utils import (
 
 class DirectForecastLoader:
     """
-    Class to load input data for direct forecasts.
+    Loads input data for perfoming direct forecasts.
     """
     def __init__(
             self,
@@ -45,20 +45,24 @@ class DirectForecastLoader:
     ):
         """
         Args:
-            input_data_path: Path pointing to the input dat.a
-            init_times: Array specifying the initialization times
+            input_data_path: Path pointing to the input data.
+            init_times: Array specifying the initialization times.
             n_steps: The number of forecast steps to perform.
             input_time: The tmie difference between input steps in hours.
             source: Which dataset the input is derived from ('merra2' or 'geos')
             batch_size: The batch size to use.
-            center_meridionally: Set to True to averaeg input instead of cropping.
-            observation_layers: Set to a positive number specifying the observation layers
-                 to load to enable observation loader.
+            center_meridionally: How to handle the meridional dimension mismatch between MERRA2 data,
+                 which has 361 grid points, and the 360 grid points expected by the model. If True,
+                 the input will be the center points computed by averaging the neighboring points.
+                 If False, the last grid point will be discarded, which is the approach taken
+                 for the original training.
+            observation_layers: If not None, a positive number defining the number observation layers
+                 to load.
             n_tiles: A tuple specifying the number of meridional and zonal observation tiles,
                  respectively.
             tile_size: A  tuple specifying the zonal and meridional size of the observation tiles.
-            full_climatology: Set to True to force loading of full climatology. Otherwise will use
-                interpolated climatology.
+            full_climatology: Set to True to force loading of full climatology. Otherwise will the
+                interpolated climatology will be used.
         """
         self.input_data_path = Path(input_data_path)
         self.input_time = input_time
@@ -88,7 +92,7 @@ class DirectForecastLoader:
             self.obs_loader = None
 
     def __len__(self) -> int:
-        return len(self.input_indices) * self.batches_per_input
+        return len(self.input_indices) * (self.batches_per_input + 1)
 
     def calculate_valid_samples(self) -> np.ndarray:
         """
@@ -114,8 +118,12 @@ class DirectForecastLoader:
             A tuple ``(init_time, valid_time, input_data)`` containing the initialization time (``init_time``),
             the valid forecast time (``valid_time``), and a dictionary containing the input data (``input_data``).
         """
-        init_ind = ind // self.batches_per_input
-        step_start = (ind % self.batches_per_input) * self.batch_size
+        init_ind = ind // (self.batches_per_input + 1)
+        step_start = (ind % (self.batches_per_input + 1)) * self.batch_size
+        if step_start == self.n_steps:
+            # Return empty batch to trigger storing of results.
+            return None, None, None
+
         step_end = min(step_start + self.batch_size, self.n_steps)
 
         input_files = [self.input_files[ind] for ind in self.input_indices[init_ind]]
@@ -205,8 +213,32 @@ class AutoregressiveForecastLoader:
             source: str = "merra2",
             batch_size: Optional[int] = None,
             center_meridionally: bool = True,
+            observation_layers: Optional[int] = None,
+            n_tiles: Tuple[int, int] = (12, 18),
+            tile_size: Tuple[int, int] = (30, 32),
             full_climatology: bool = False
     ):
+        """
+        Args:
+            input_data_path: Path pointing to the input data.
+            init_times: Array specifying the initialization times.
+            n_steps: The number of forecast steps to perform.
+            input_time: The tmie difference between input steps in hours.
+            source: Which dataset the input is derived from ('merra2' or 'geos')
+            batch_size: The batch size to use.
+            center_meridionally: How to handle the meridional dimension mismatch between MERRA2 data,
+                 which has 361 grid points, and the 360 grid points expected by the model. If True,
+                 the input will be the center points computed by averaging the neighboring points.
+                 If False, the last grid point will be discarded, which is the approach taken
+                 for the original training.
+            observation_layers: If not None, a positive number defining the number observation layers
+                 to load.
+            n_tiles: A tuple specifying the number of meridional and zonal observation tiles,
+                 respectively.
+            tile_size: A  tuple specifying the zonal and meridional size of the observation tiles.
+            full_climatology: Set to True to force loading of full climatology. Otherwise will the
+                interpolated climatology will be used.
+        """
         self.input_data_path = Path(input_data_path)
         self.input_time = input_time
 
@@ -223,6 +255,16 @@ class AutoregressiveForecastLoader:
 
         self.n_steps = n_steps
         self.batches_per_input = ceil(n_steps / self.batch_size)
+
+        if observation_layers is not None:
+            self.obs_loader = ObservationLoader(
+                Path(input_data_path) / "obs",
+                observation_layers=observation_layers,
+                n_tiles=n_tiles,
+                tile_size=tile_size
+            )
+        else:
+            self.obs_loader = None
 
     def __len__(self) -> int:
         return ceil(len(self.input_indices) / self.batch_size)
@@ -257,9 +299,9 @@ class AutoregressiveForecastLoader:
         """
         input_indices = self.input_indices[input_index]
         init_time = self.input_times[input_indices[-1]]
+        input_times = [self.input_times[ind] for ind in input_indices]
 
         input_time = torch.tensor(self.input_time).to(dtype=torch.float32)
-        input_time = torch.repeat_interleave(input_time[None], self.n_steps, 0)
         lead_time = input_time
 
         dynamic = [load_dynamic_input(self.input_data_path / self.input_files[ind]) for ind in input_indices]
@@ -294,6 +336,30 @@ class AutoregressiveForecastLoader:
             "input_time": input_time,
             "lead_time": lead_time
         }
+
+        if self.obs_loader is not None:
+            obs = []
+            meta = []
+            for time_ind, time in enumerate(input_times):
+                obs_t = []
+                meta_t = []
+                for step in range(-self.input_time + 3, 1, 3):
+                    obs_s, meta_s = self.obs_loader.load_observations(
+                        time + np.timedelta64(step, "h"),
+                        offset=step // 3,
+                    )
+                    obs_t.append(obs_s)
+                    meta_t.append(meta_s)
+                obs.append(torch.cat(obs_t, 2))
+                meta.append(torch.cat(meta_t, 2))
+            obs = torch.stack(obs, 0)
+            obs_mask = obs < -1.4
+            obs = torch.nan_to_num(obs, nan=-1.5)
+            meta = torch.stack(meta, 0)
+
+            inpt["obs"] = obs
+            inpt["obs_mask"] = obs_mask
+            inpt["obs_meta"] = meta
 
         return init_time, inpt
 

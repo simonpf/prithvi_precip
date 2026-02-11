@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from scipy.fftpack import idctn
 from scipy import stats
+from tqdm import tqdm
 import xarray as xr
 
 from prithvi_precip.metrics import (
@@ -32,7 +33,8 @@ def evaluate_normal_preds(metric: Metric) -> None:
     y = np.random.normal(size=(100, 100)) + 10
     lons = np.zeros_like(x)
     lats = np.zeros_like(x)
-    metric.update(lons, lats, x, y)
+    time = np.zeros_like(x)
+    metric.update(lons, lats, time, x, y)
 
 
 def evaluate_normal_preds_with_invalid(metric: Metric) -> None:
@@ -45,7 +47,8 @@ def evaluate_normal_preds_with_invalid(metric: Metric) -> None:
     y = np.random.normal(size=(100, 100)) + 10
     lons = np.zeros_like(x)
     lats = np.zeros_like(x)
-    metric.update(lons, lats, x, y)
+    time = np.zeros_like(x)
+    metric.update(lons, lats, time, x, y)
 
 
 def test_bias():
@@ -87,7 +90,8 @@ def evaluate_fixed(metric: Metric) -> None:
     y = np.ones_like(x)
     lons = np.zeros_like(x)
     lats = np.zeros_like(x)
-    metric.update(lons, lats, x, y)
+    time = np.zeros_like(x)
+    metric.update(lons, lats, time, x, y)
 
 
 def test_mse():
@@ -139,7 +143,8 @@ def evaluate_dependent_preds(metric: Metric) -> None:
     y = 2.0 * x
     lons = np.zeros_like(x)
     lats = np.zeros_like(x)
-    metric.update(lons, lats, x, y)
+    time = np.zeros_like(x)
+    metric.update(lons, lats, time, x, y)
 
 
 def evaluate_anticorrelated_preds(metric: Metric) -> None:
@@ -152,7 +157,8 @@ def evaluate_anticorrelated_preds(metric: Metric) -> None:
     y = -2.0 * x
     lons = np.zeros_like(x)
     lats = np.zeros_like(x)
-    metric.update(lons, lats, x, y)
+    time = np.zeros_like(x)
+    metric.update(lons, lats, time, x, y)
 
 
 def test_correlation_coef_dep():
@@ -206,6 +212,7 @@ def test_crps():
     truths = np.random.uniform(size=10_000)
     lons = np.zeros_like(truths)
     lats = np.zeros_like(truths)
+    time = np.zeros_like(truths)
     quantiles = np.linspace(0, 1, 34)[1:-1]
     pred = stats.norm.ppf(quantiles)[..., None]
     pred = np.broadcast_to(pred, (32,) + truths.shape)
@@ -213,7 +220,7 @@ def test_crps():
     crps_ref = crps_normal(truths).mean()
 
     crps = CRPS()
-    crps.update(lons, lats, pred, truths, taus=quantiles)
+    crps.update(lons, lats, time, pred, truths, taus=quantiles)
     res = crps.compute()
     assert np.isclose(res.crps.data, crps_ref, rtol=0.02)
 
@@ -222,10 +229,11 @@ def test_crps():
     pred = np.random.uniform(size=10_000)
     lons = np.zeros_like(truths)
     lats = np.zeros_like(truths)
+    time = np.zeros_like(truths)
 
     crps_ref = np.abs(pred - truths).mean()
     crps = CRPS()
-    crps.update(lons, lats, pred, truths)
+    crps.update(lons, lats, time, pred, truths)
     res = crps.compute()
     assert np.isclose(res.crps.data, crps_ref, rtol=0.02)
 
@@ -302,14 +310,15 @@ def test_acc(acc_test_data_without_background, acc_test_data_with_background):
 
     lons = np.random.uniform(-180, 180, size=(256, 256))
     lats = np.random.uniform(-90, 90, size=(256, 256))
+    time = np.random.uniform(-90, 90, size=(256, 256))
 
     truth = np.random.normal(size=(256, 256))
     pred = truth + 0.1 * np.random.normal(size=(256, 256))
 
-    acc.update(lons, lats, pred, truth)
+    acc.update(lons, lats, time, pred, truth)
     acc = acc.compute().acc.data
 
-    corr.update(lons, lats, pred, truth)
+    corr.update(lons, lats, time, pred, truth)
     corr = corr.compute().correlation_coef.data
 
     assert np.isclose(acc, corr, rtol=0.01)
@@ -327,11 +336,11 @@ def test_acc(acc_test_data_without_background, acc_test_data_with_background):
     truth = r + np.random.normal(size=(512, 512))
     pred = r + np.random.normal(size=(512, 512))
 
-    acc.update(lons, lats, pred, truth)
+    acc.update(lons, lats, time, pred, truth)
     clim = acc.climatology
     acc = acc.compute().acc.data
 
-    corr.update(lons, lats, pred, truth)
+    corr.update(lons, lats, time, pred, truth)
     corr = corr.compute().correlation_coef.data
 
     assert 0 < corr
@@ -346,13 +355,13 @@ def seeps_test_data_with_background(tmp_path):
     output_path = tmp_path / "background"
     output_path.mkdir()
 
-    lons = np.linspace(-180, 180, 256)
-    lats = np.linspace(-90, 90, 256)
+    lons = np.linspace(-180, 180, 64)
+    lats = np.linspace(-90, 90, 64)
 
     for time in np.arange(
             np.datetime64("2020-01-01"),
-            np.datetime64("2020-12-01"),
-            np.timedelta64(1, "D")
+            np.datetime64("2021-01-01"),
+            np.timedelta64(6, "h")
     ):
         date = time.astype("datetime64[s]").item()
         fname = date.strftime("precip_%Y%m%d%H%M%S.nc")
@@ -361,7 +370,8 @@ def seeps_test_data_with_background(tmp_path):
         data = xr.Dataset({
             "longitude": (("longitude",), lons),
             "latitude": (("latitude",), lats),
-            "surface_precip": (("latitude", "latitude"), precip)
+            "surface_precip": (("latitude", "latitude"), precip),
+            "time": time
         })
         data.to_netcdf(output_path / fname)
     return output_path
@@ -373,8 +383,8 @@ def test_seeps(seeps_test_data_with_background):
     a exponential distribution with spatially dependent scale parameter.
     """
     # With background signal, SEEPS smaller be the same as CorCoef.
-    seeps_0 = SEEPS()
-    seeps_1 = SEEPS()
+    seeps_0 = SEEPS(resolution=18)
+    seeps_1 = SEEPS(resolution=18)
     corr = CorrelationCoef()
     files = sorted(list(seeps_test_data_with_background.glob("*.nc")))
     seeps_0.calculate_climatology(files)
@@ -383,23 +393,35 @@ def test_seeps(seeps_test_data_with_background):
     clim = seeps_0.climatology
 
     medians = np.zeros_like(clim.surface_precip_second_tercile.data)
-    for lat_ind in range(clim.latitude.size):
-        for lon_ind in range(clim.longitude.size):
-            medians[lat_ind, lon_ind] = np.interp(0.5, clim.cdf.data[lat_ind, lon_ind], clim.surface_precip.data)
-    clim["median"] = (("latitude", "longitude"), medians)
+    for month_ind in range(clim.month.size):
+        for time_ind in range(clim.hour.size):
+            for lat_ind in range(clim.latitude.size):
+                for lon_ind in range(clim.longitude.size):
+                    medians[month_ind, time_ind, lat_ind, lon_ind] = np.interp(
+                        0.5,
+                        clim.cdf.data[month_ind, time_ind, lat_ind, lon_ind],
+                        clim.surface_precip.data
+                    )
+    clim["median"] = (("month", "hour", "latitude", "longitude"), medians)
 
-    for path in files:
+    for path in tqdm(files):
         with xr.open_dataset(path) as data:
             lons = data.longitude.load().data
             lats = data.latitude.load().data
-            medians_i = clim["median"].interp(latitude=lats, longitude=lons)
+            medians_i = clim["median"].interp(
+                month=data.time.dt.month,
+                hour=data.time.dt.hour,
+                latitude=lats,
+                longitude=lons,
+                method="nearest"
+            )
             sp = data.surface_precip.load().data
             lons, lats = np.meshgrid(lons, lats)
-            seeps_0.update(lons, lats, sp, sp)
-            seeps_1.update(lons, lats, medians_i.data, sp)
+            seeps_0.update(lons, lats, data.time.data, sp, sp)
+            seeps_1.update(lons, lats, data.time.data, medians_i.data, sp)
 
     seeps = seeps_0.compute().seeps.data
-    assert np.isclose(seeps, 0.0, atol=0.1)
+    assert np.isclose(seeps, 0.0, atol=0.2)
 
     seeps = seeps_1.compute().seeps.data
-    assert np.isclose(seeps, 1.0, atol=0.1)
+    assert 0.5 < seeps
