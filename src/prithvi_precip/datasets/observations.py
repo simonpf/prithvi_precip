@@ -453,12 +453,11 @@ class ObservationLoader(Dataset):
                     for col_ind in range(self.n_tiles[1]):
 
                         obs_name = f"observations_{row_ind:02}_{col_ind:02}"
-                        if obs_name not in data:
+                        obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
+                        if obs_name not in data or obs_ids not in data:
                             continue
 
                         try:
-                            obs = data[obs_name].data
-
                             if self.obs_regexp is not None:
                                 obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                                 obs_ids = data[obs_ids].data
@@ -470,11 +469,11 @@ class ObservationLoader(Dataset):
                                     continue
                             else:
                                 if randomize:
-                                    inds = np.random.permutation(obs.shape[0])
+                                    inds = np.random.permutation(data[obs_name].shape[0])
                                 else:
-                                    inds = np.arange(obs.shape[0])
+                                    inds = np.arange(data[obs_name].shape[0])
 
-                            tiles = min(obs.shape[0], self.observation_layers, len(inds))
+                            tiles = min(data[obs_name].shape[0], self.observation_layers, len(inds))
 
                             obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                             obs_ids = data[obs_ids].data[inds[:tiles]]
@@ -482,22 +481,22 @@ class ObservationLoader(Dataset):
                             minmax = np.array([self.get_minmax(obs_id) for obs_id in obs_ids])
                             minmax = minmax[..., None, None]
 
-                            obs = obs[inds[:tiles]]
+                            obs = data[obs_name][inds[:tiles]].load().data
                             invalid = np.isnan(obs)
                             obs_n = -1.0 + 2.0 * (obs - minmax[:, 0]) / (minmax[:, 1] - minmax[:, 0])
                             obs_n[invalid] = -1.5
                             observations[row_ind, col_ind, :tiles, 0]  = torch.tensor(obs_n)
 
-                            freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]])
+                            freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data)
                             freq = -1.0 + 2.0 * (freq - np.log10(self.freq_min)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
-                            offs = data[f"offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]
+                            offs = data[f"offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data
                             offs = np.minimum(offs, 10) / 10
                             pol = torch.nn.functional.one_hot(
-                                torch.tensor(data[f"polarization_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]]).to(dtype=torch.int64),
+                                torch.tensor(data[f"polarization_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data).to(dtype=torch.int64),
                                 num_classes=5
                             )
 
-                            time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"].data[inds[:tiles]] / 180.0
+                            time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data / 180.0
                             if offset is not None:
                                 time_offset = time_offset + offset
 
