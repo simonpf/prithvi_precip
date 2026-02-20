@@ -42,7 +42,8 @@ def get_severe_weather_mask() -> xr.Dataset:
     """
     A mask identifying the valid domain of the training data.
     """
-    return xr.load_dataset(Path(__file__).parent / "severe_weather_mask.nc").mask.data
+    with xr.open_dataset(Path(__file__).parent / "severe_weather_mask.nc", engine="h5netcdf", chunks=None, cache=False) as data:
+            return data.mask.data.copy()
 
 
 class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
@@ -132,7 +133,8 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
         """
         A mask identifying the valid domain of the training data.
         """
-        return xr.load_dataset(Path(__file__).parent / "severe_weather_mask.nc").mask.data
+        with xr.open_dataset(Path(__file__).parent / "severe_weather_mask.nc", engine="h5netcdf", chunks=None, cache=False) as data:
+            return data.mask.data.copy()
 
 
     def split_and_copy_files(self) -> None:
@@ -252,7 +254,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
         Return:
             A dictionary containing the target names and corresponding tensors.
         """
-        with xr.load_dataset(self.training_data_path / output_file) as data:
+        with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
             LOGGER.debug("Loading severe weather data from %s.", output_file)
             data = data.compute()
             tornado = torch.tensor(data.tornado.data)

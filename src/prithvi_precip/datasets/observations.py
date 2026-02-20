@@ -253,7 +253,8 @@ class ObservationLoader(Dataset):
         with lock_file:
             with xr.open_dataset(stats_file, engine="h5netcdf", chunks=None, cache=False) as data:
                 stats = data.load()
-            del data
+                # Explicitly copy data to detach from file handle
+                stats = stats.copy(deep=True)
         return stats
 
     def get_observation_mask(
@@ -295,9 +296,10 @@ class ObservationLoader(Dataset):
                             for zonal_index in range(self.n_tiles[1]):
                                 tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
                                 if tilename in obs_data:
-                                    obs_ids = obs_data[tilename].data
+                                    obs_ids = obs_data[tilename].data.copy()
                                     obs_ids[obs_ids < 0] += 256
                                     obs_tiles[-1][:, meridional_index, zonal_index] += np.histogram(obs_ids, bins=obs_bins)[0]
+                                    del obs_ids
                 except Exception as exc:
                     LOGGER.exception(
                         "Encountered an error when observation file %s.",
@@ -354,9 +356,10 @@ class ObservationLoader(Dataset):
                 for zonal_index in range(self.n_tiles[1]):
                     tilename = f"obs_id_{meridional_index:02}_{zonal_index:02}"
                     if tilename in obs_data:
-                        obs_ids_tile = obs_data[tilename].data.astype(np.int64)
+                        obs_ids_tile = obs_data[tilename].data.astype(np.int64).copy()
                         obs_ids_tile[obs_ids_tile < 0] += 256
-                        obs_ids += list(obs_data[tilename].data)
+                        obs_ids += list(obs_ids_tile)
+                        del obs_ids_tile
 
         obs_ids = set(obs_ids)
         available = [all_vars[obs_id] for obs_id in obs_ids]
@@ -392,11 +395,12 @@ class ObservationLoader(Dataset):
                     obs_name = f"observations_{meridional_index:02}_{zonal_index:02}"
                     if obs_id_name not in obs_data:
                         continue
-                    obs_ids = obs_data[obs_id_name].data.astype(np.int64)
+                    obs_ids = obs_data[obs_id_name].data.astype(np.int64).copy()
                     obs_ids[obs_ids < 0] += 256
                     if obs_id in obs_ids:
                         obs_ind = list(obs_ids).index(obs_id)
-                        observations[meridional_index, zonal_index, :, :] = obs_data[obs_name].data[obs_ind]
+                        observations[meridional_index, zonal_index, :, :] = obs_data[obs_name].data[obs_ind].copy()
+                    del obs_ids
 
         n_y_g, n_x_g, n_y_l, n_x_l = observations.shape
         observations = np.transpose(observations, (0, 2, 1, 3)).reshape(n_y_g * n_y_l, n_x_g * n_x_l)
@@ -445,9 +449,10 @@ class ObservationLoader(Dataset):
 
         layer_ind = np.zeros(self.n_tiles, dtype=np.int64)
 
-        data = None
         try:
-            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
+            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data_file:
+
+                data = data_file.load().copy(deep=True)
 
                 for row_ind in range(self.n_tiles[0]):
                     for col_ind in range(self.n_tiles[1]):
@@ -481,22 +486,25 @@ class ObservationLoader(Dataset):
                             minmax = np.array([self.get_minmax(obs_id) for obs_id in obs_ids])
                             minmax = minmax[..., None, None]
 
-                            obs = data[obs_name][inds[:tiles]].load().data
+                            obs = data[obs_name][inds[:tiles]].load().data.copy()
                             invalid = np.isnan(obs)
                             obs_n = -1.0 + 2.0 * (obs - minmax[:, 0]) / (minmax[:, 1] - minmax[:, 0])
                             obs_n[invalid] = -1.5
                             observations[row_ind, col_ind, :tiles, 0]  = torch.tensor(obs_n)
+                            del obs, obs_n
 
-                            freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data)
+                            freq = np.log10(data[f"frequency_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data.copy())
                             freq = -1.0 + 2.0 * (freq - np.log10(self.freq_min)) / (np.log10(self.freq_max) - np.log10(self.freq_min))
-                            offs = data[f"offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data
+                            offs = data[f"offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data.copy()
                             offs = np.minimum(offs, 10) / 10
+                            pol_data = data[f"polarization_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data.copy()
                             pol = torch.nn.functional.one_hot(
-                                torch.tensor(data[f"polarization_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data).to(dtype=torch.int64),
+                                torch.tensor(pol_data).to(dtype=torch.int64),
                                 num_classes=5
                             )
+                            del pol_data
 
-                            time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data / 180.0
+                            time_offset = data[f"time_offset_{row_ind:02}_{col_ind:02}"][inds[:tiles]].load().data.copy() / 180.0
                             if offset is not None:
                                 time_offset = time_offset + offset
 
@@ -504,6 +512,7 @@ class ObservationLoader(Dataset):
                             meta_data[row_ind, col_ind, :tiles, 1] = torch.tensor(offs)[..., None, None]
                             meta_data[row_ind, col_ind, :tiles, 2] = torch.tensor(time_offset)
                             meta_data[row_ind, col_ind, :tiles, 3:] = pol[..., None, None]
+                            del freq, offs, time_offset, pol
                         except Exception as exc:
                             LOGGER.exception(
                                 "Encountered an error when loading observations for tile [%s, %s] from file '%s'.",
@@ -511,8 +520,6 @@ class ObservationLoader(Dataset):
                             )
         except Exception:
             return observations, meta_data
-        finally:
-            del data
 
         observations = torch.nan_to_num(observations, nan=-1.5)
         meta_data = torch.nan_to_num(meta_data, nan=-1.5)
