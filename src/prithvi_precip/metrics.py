@@ -105,7 +105,7 @@ class Metric:
                 shm = shm[0]
                 if isinstance(shm, str):
                     shm = shared_memory.SharedMemory(shm)
-                shm.unlink()
+                try:\n                    shm.unlink()\n                except FileNotFoundError:\n                    pass  # Already cleaned up\n\n    def __del__(self):\n        \"\"\"\n        Ensure shared memory is cleaned up when object is deleted.\n        \"\"\"\n        try:\n            self.cleanup()\n        except:\n            pass  # Ignore cleanup errors during destruction
 
 
 class QuantificationMetric(Metric):
@@ -495,8 +495,8 @@ class SEEPS(QuantificationMetric):
         hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         fname = f"seeps_climatology_{hash}.nc"
         if Path(fname).exists():
-            with xr.open_dataset(fname) as clim:
-                clim = clim[["p_dry", "surface_precip_second_tercile"]].compute()
+            with xr.open_dataset(fname, engine="h5netcdf", chunks=None, cache=False) as clim:
+                clim = clim[["p_dry", "surface_precip_second_tercile"]].compute().copy(deep=True)
                 clim_right = clim[{"hour": [0]}].assign_coords(hour=[24])
                 self.climatology = xr.concat([clim, clim_right], dim="hour")
                 return self.climatology
@@ -517,23 +517,24 @@ class SEEPS(QuantificationMetric):
 
         for path in tqdm(reference_files):
             try:
-                with xr.open_dataset(path) as data:
-                    lons = data.longitude.load().data
-                    lats = data.latitude.load().data
+                with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
+                    lons = data.longitude.load().data.copy()
+                    lats = data.latitude.load().data.copy()
                     lons, lats = np.meshgrid(lons, lats)
                     lons = lons.ravel()
                     lats = lats.ravel()
 
                     time = data.time.load()
-                    hour = time.dt.hour.data.ravel()
+                    hour = time.dt.hour.data.ravel().copy()
                     hour = np.expand_dims(hour, tuple(np.arange(lats.ndim - hour.ndim)))
                     hour = np.broadcast_to(hour, lats.shape).copy()
                     hour[21 < hour] -= 24
-                    month = time.dt.month.data.ravel()
+                    month = time.dt.month.data.ravel().copy()
                     month = np.expand_dims(month, tuple(np.arange(lats.ndim - month.ndim)))
                     month = np.broadcast_to(month, lats.shape).copy()
 
-                    sp = data.surface_precip.data.ravel()
+                    sp = data.surface_precip.data.ravel().copy()
+                    del time
                     dists += binned_statistic_dd(
                         [month, hour, lats, lons, sp],
                         sp,
@@ -738,7 +739,8 @@ class ACC(CorrelationCoef):
         hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         fname = f"acc_climatology_{hash}.nc"
         if Path(fname).exists():
-            result = xr.load_dataset(fname)
+            with xr.open_dataset(fname, engine="h5netcdf", chunks=None, cache=False) as data:
+                result = data.load().copy(deep=True)
             self.climatology = result
             return result
 
@@ -751,13 +753,13 @@ class ACC(CorrelationCoef):
         sp_cts = np.zeros((n_lats, n_lons))
 
         for path in tqdm(reference_files):
-            with xr.open_dataset(path) as data:
-                lons = data.longitude.load().data
-                lats = data.latitude.load().data
+            with xr.open_dataset(path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                lons = data.longitude.load().data.copy()
+                lats = data.latitude.load().data.copy()
                 lons, lats = np.meshgrid(lons, lats)
                 lons = lons.ravel()
                 lats = lats.ravel()
-                sp = data.surface_precip.data.ravel()
+                sp = data.surface_precip.data.ravel().copy()
                 sp_tot += binned_statistic_dd([lats, lons], sp, bins=(lat_bins, lon_bins), statistic="sum")[0]
                 sp_cts += binned_statistic_dd([lats, lons], 0 <= sp, bins=(lat_bins, lon_bins), statistic="sum")[0]
 

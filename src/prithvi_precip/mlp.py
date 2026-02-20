@@ -167,7 +167,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
     @cached_property
     def conus_slices(self) -> Dict[str, slice]:
-        with xr.open_dataset(self.training_data_path / self.input_files[0]) as data:
+        with xr.open_dataset(self.training_data_path / self.input_files[0], engine=\"h5netcdf\", chunks=None, cache=False) as data:
             lons = data.longitude.data
             lats = data.latitude.data
         data.close()
@@ -311,7 +311,7 @@ class SevereWeatherForecastDataset(MERRAInputData):
 
             print(input_files, output_file, lead_time)
 
-            with xr.open_dataset(self.training_data_path / output_file) as data:
+            with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
                 LOGGER.debug("Loading severe weather mask from %s.", output_file)
 
                 data = data[self.conus_slices].compute()
@@ -559,7 +559,7 @@ class SeverePrecipForecastDataset(SevereWeatherForecastDataset):
                 climate = load_climatology(output_time, self.data_path)
                 inpt["climate"] = transform(torch.tensor(climate))
 
-            with xr.open_dataset(self.training_data_path / output_file) as data:
+            with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
                 target = data.surface_precip.data
             data.close()
             del data
