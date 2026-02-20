@@ -67,7 +67,7 @@ def download_dynamic(
     for recs in geos_recs:
         data_combined = []
         for rec in recs:
-            with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+            with xr.open_dataset(rec.local_path, engine="h5netcdf", chunks=None, cache=False) as data:
                 vars = [
                     var for var in vars_req if var in data.variables
                 ]
@@ -146,7 +146,7 @@ def download_precip(
     all_data = []
     data_combined = []
     for rec in recs:
-        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(rec.local_path, engine="h5netcdf", chunks=None, cache=False) as data:
             vars = [
                 var for var in vars_req if var in data.variables
             ]
@@ -226,7 +226,7 @@ def download_geos_forecast(
                 "Error downloading file record %s", rec
             )
             return None
-        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(rec.local_path, engine="h5netcdf", chunks=None, cache=False) as data:
             data = data[["PRECTOT"]].compute().rename({
                 "PRECTOT": "surface_precip",
                 "lon": "longitude",

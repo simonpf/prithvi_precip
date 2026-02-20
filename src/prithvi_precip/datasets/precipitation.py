@@ -453,7 +453,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
                 noise = 0.05 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)).astype(np.float32))
                 x["climate"] += noise * d_x
 
-        with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
             LOGGER.debug("Loading precip data from %s.", output_file)
             precip = torch.tensor(data.surface_precip.data.astype(np.float32))
             if self.reference_data.startswith("era5"):
@@ -467,7 +467,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
             diff = int((next_time - output_time).astype("timedelta64[h]").astype("int64").item())
             if diff <= self.lead_time:
                 frac = self.rng.random()
-                with xr.open_dataset(self.training_data_path / next_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                with xr.open_dataset(self.training_data_path / next_file, engine="h5netcdf", chunks=None, cache=False) as data:
                     LOGGER.debug("Loading next precip data from %s.", output_file)
                     next_precip = torch.tensor(data.surface_precip.data.astype(np.float32))
                     if self.reference_data.startswith("era5"):
@@ -711,7 +711,7 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             if output_time in available_times:
                 output_ind = available_times.index(output_time)
                 output_file = self.output_files[output_indices[output_ind]]
-                with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
                     LOGGER.debug("Loading precip data from %s.", output_file)
                     precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
 
@@ -934,7 +934,7 @@ class LongRangePrecipitationForecastDataset(DirectPrecipForecastDataset):
                 noise = 0.05 * torch.tensor(self.rng.normal(size=(d_x.shape[0], 1, 1)).astype(np.float32))
                 x["climate"] += noise * d_x
 
-        with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
             LOGGER.debug("Loading precip data from %s.", output_file)
             precip = torch.tensor(data.surface_precip.data.astype(np.float32))
             if self.reference_data.startswith("era5"):
@@ -948,7 +948,7 @@ class LongRangePrecipitationForecastDataset(DirectPrecipForecastDataset):
             diff = int((next_time - output_time).astype("timedelta64[D]").astype("int64").item())
             if diff <= self.lead_time:
                 frac = self.rng.random()
-                with xr.open_dataset(self.training_data_path / next_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                with xr.open_dataset(self.training_data_path / next_file, engine="h5netcdf", chunks=None, cache=False) as data:
                     LOGGER.debug("Loading next precip data from %s.", output_file)
                     next_precip = torch.tensor(data.surface_precip.data.astype(np.float32))
                     if self.reference_data.startswith("era5"):

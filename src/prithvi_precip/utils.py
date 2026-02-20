@@ -87,7 +87,8 @@ def load_static_data(data_dir: Path) -> xr.Dataset:
         An xarray.Dataset containing the static MERRA data expected by the Prithvi-WxC model.
     """
     static_file = data_dir / "static" / "static.nc"
-    return xr.load_dataset(static_file)
+    with xr.open_dataset(static_file, engine="h5netcdf", chunks=None, cache=False) as data:
+        return data.load().copy(deep=True)
 
 
 @cache

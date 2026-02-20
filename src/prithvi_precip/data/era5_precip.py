@@ -56,7 +56,7 @@ def extract_era5_precip(
     surface_precip = []
     for time in [time_before, time_now, time_after]:
         file_path = era5_path / f"{time.year}{time.month:02}" / f"ERA5_{time.year}{time.month:02}{time.day:02}_surf.nc"
-        with xr.open_dataset(file_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(file_path, engine="h5netcdf", chunks=None, cache=False) as data:
             surface_precip.append(data["tp"].compute())
     surface_precip = xr.concat(surface_precip, dim="time").sortby("time")
 

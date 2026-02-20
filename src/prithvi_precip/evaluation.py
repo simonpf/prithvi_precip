@@ -119,7 +119,8 @@ class Evaluator:
         """
         for time in tqdm(np.random.permutation(self.all_times), desc="Evaluating forecasts"):
             try:
-                with xr.open_dataset(next(iter(self.reference_files.values())), engine=\"h5netcdf\", chunks=None, cache=False) as ref_file:\n                    results_ref = ref_file.load().copy(deep=True)
+                with xr.open_dataset(next(iter(self.reference_files.values())), engine="h5netcdf", chunks=None, cache=False) as ref_file:
+                    results_ref = ref_file.load().copy(deep=True)
                 sp_ref_persist = results_ref.surface_precip.data
                 lat_mask = np.isfinite(sp_ref_persist).any(-1)
                 lon_mask = np.isfinite(sp_ref_persist).any(-2)
@@ -256,14 +257,14 @@ class Evaluator:
         levels = np.logspace(-1, np.log10(20), 12)
 
         for fcst, res_files in self.result_files.items():
-            with xr.open_dataset(res_files[time], engine=\"h5netcdf\", chunks=None, cache=False) as res_data:
+            with xr.open_dataset(res_files[time], engine="h5netcdf", chunks=None, cache=False) as res_data:
                 results[fcst] = res_data.load().copy(deep=True).interp(valid_time=to_datetime64(time) + lead_time)
 
         valid_time = next(iter(results.values())).valid_time.data
         valid_time = valid_time.astype("datetime64[s]").item()
 
-        with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+        with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
         sp_ref = results_ref.surface_precip.data
         if "radar_quality_index" in results_ref:
             rqi = results_ref.radar_quality_index.data
@@ -382,7 +383,7 @@ class Evaluator:
             levels = np.logspace(-1, 1, 11)
 
             for fcst, res_files in self.result_files.items():
-                with xr.open_dataset(res_files[init_time], engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                with xr.open_dataset(res_files[init_time], engine="h5netcdf", chunks=None, cache=False) as data:
                     data = data.sel(valid_time=valid_time).compute()
                 results[fcst] = data
 
@@ -395,8 +396,8 @@ class Evaluator:
 
                 # Plot reference
                 if step_ind == 0:
-                    with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+                    with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
                     sp_ref = results_ref.surface_precip.data
                     if "radar_quality_index" in results_ref:
                         rqi = results_ref.radar_quality_index.data
@@ -515,14 +516,14 @@ class Evaluator:
         results = {}
 
         for fcst, res_files in self.result_files.items():
-            with xr.open_dataset(res_files[time], engine=\"h5netcdf\", chunks=None, cache=False) as res_data:
+            with xr.open_dataset(res_files[time], engine="h5netcdf", chunks=None, cache=False) as res_data:
                 results[fcst] = res_data.load().copy(deep=True)
 
         valid_times = next(iter(results.values())).valid_time.data
         valid_time = valid_times[0].astype("datetime64[s]").item()
 
-        with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+        with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
 
         # Determin lat/lon mask
         sp_ref = results_ref.surface_precip.data
@@ -566,8 +567,8 @@ class Evaluator:
             title.set_text(f"{init_time.strftime('%Y-%m-%d %H:%M')} + {int(lead_time_h):02} h")
 
             if valid_time in self.reference_files:
-                with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+                with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
                 sp_ref = np.maximum(results_ref.surface_precip.data[lat_mask][..., lon_mask], 1e-3)
                 img_ref.set_data(sp_ref)
 
@@ -612,14 +613,14 @@ class Evaluator:
         results = {}
 
         for fcst, res_files in self.result_files.items():
-            with xr.open_dataset(res_files[time], engine=\"h5netcdf\", chunks=None, cache=False) as res_data:
+            with xr.open_dataset(res_files[time], engine="h5netcdf", chunks=None, cache=False) as res_data:
                 results[fcst] = res_data.load().copy(deep=True)
 
         valid_times = next(iter(results.values())).valid_time.data
         valid_time = valid_times[0].astype("datetime64[s]").item()
 
-        with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+        with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
 
         # Determin lat/lon mask
         sp_ref = results_ref.surface_precip.data
@@ -766,14 +767,14 @@ class Evaluator:
         results = {}
 
         for fcst, res_files in self.result_files.items():
-            with xr.open_dataset(res_files[time], engine=\"h5netcdf\", chunks=None, cache=False) as res_data:
+            with xr.open_dataset(res_files[time], engine="h5netcdf", chunks=None, cache=False) as res_data:
                 results[fcst] = res_data.load().copy(deep=True)
 
         valid_times = next(iter(results.values())).valid_time.data
         valid_time = valid_times[0].astype("datetime64[s]").item()
 
-        with xr.open_dataset(self.reference_files[valid_time], engine=\"h5netcdf\", chunks=None, cache=False) as ref_data:
-            results_ref = ref_data.load().copy(deep=True)
+        with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
+                        results_ref = ref_data.load().copy(deep=True)
 
         # Determin lat/lon mask
         sp_ref = results_ref.surface_precip.data

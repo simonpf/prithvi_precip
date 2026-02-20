@@ -70,7 +70,7 @@ e       base_path: Path object pointing to the directory to which to write
     lons = lons[0]
     lats = lats[:, 0]
 
-    with xr.open_dataset(goes_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+    with xr.open_dataset(goes_file, engine="h5netcdf", chunks=None, cache=False) as data:
         data = data[CHANNELS].compute()
         data = data.interp(lat=lats, lon=lons).rename(lat="latitude", lon="longitude")
 

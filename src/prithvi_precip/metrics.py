@@ -105,7 +105,19 @@ class Metric:
                 shm = shm[0]
                 if isinstance(shm, str):
                     shm = shared_memory.SharedMemory(shm)
-                try:\n                    shm.unlink()\n                except FileNotFoundError:\n                    pass  # Already cleaned up\n\n    def __del__(self):\n        \"\"\"\n        Ensure shared memory is cleaned up when object is deleted.\n        \"\"\"\n        try:\n            self.cleanup()\n        except:\n            pass  # Ignore cleanup errors during destruction
+                try:
+                    shm.unlink()
+                except FileNotFoundError:
+                    pass  # Already cleaned up
+
+    def __del__(self):
+        """
+        Ensure shared memory is cleaned up when object is deleted.
+        """
+        try:
+            self.cleanup()
+        except:
+            pass  # Ignore cleanup errors during destruction
 
 
 class QuantificationMetric(Metric):
@@ -753,7 +765,7 @@ class ACC(CorrelationCoef):
         sp_cts = np.zeros((n_lats, n_lons))
 
         for path in tqdm(reference_files):
-            with xr.open_dataset(path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
                 lons = data.longitude.load().data.copy()
                 lats = data.latitude.load().data.copy()
                 lons, lats = np.meshgrid(lons, lats)

@@ -217,7 +217,7 @@ def track_stats(
         if not stats_file.exists():
             data = xr.Dataset()
         else:
-            with xr.open_dataset(stats_file, engine=\"h5netcdf\", chunks=None, cache=False) as data_file:
+            with xr.open_dataset(stats_file, engine="h5netcdf", chunks=None, cache=False) as data_file:
                 data = data_file.load().copy(deep=True)
 
         all_vars = data.attrs.get("variables", "").split(",")

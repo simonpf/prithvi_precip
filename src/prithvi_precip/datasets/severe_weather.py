@@ -254,7 +254,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
         Return:
             A dictionary containing the target names and corresponding tensors.
         """
-        with xr.open_dataset(self.training_data_path / output_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
             LOGGER.debug("Loading severe weather data from %s.", output_file)
             data = data.compute()
             tornado = torch.tensor(data.tornado.data)

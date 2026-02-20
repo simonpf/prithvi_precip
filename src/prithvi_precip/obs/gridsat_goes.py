@@ -71,7 +71,7 @@ def extract_observations(
     lons = lons[0]
     lats = lats[:, 0]
 
-    with xr.open_dataset(goes_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+    with xr.open_dataset(goes_file, engine="h5netcdf", chunks=None, cache=False) as data:
         data = data[[f"ch{ch_ind}" for ch_ind in range(1, 7)]].compute()
         data = data.interp(lat=lats, lon=lons).rename(lat="latitude", lon="longitude")
 

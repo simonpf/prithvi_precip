@@ -40,7 +40,7 @@ def load_surface_climatology(
     doy = min((time - start_of_year).days + 1, 365)
     fname = f"climate_surface_doy{doy:03}_hour00.nc"
 
-    with xr.open_dataset(climatology_path / fname, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+    with xr.open_dataset(climatology_path / fname, engine="h5netcdf", chunks=None, cache=False) as data:
         if variables is not None:
             loaded = data[variables].compute()
         else:
@@ -68,7 +68,7 @@ def load_vertical_climatology(
     doy = min((time - start_of_year).days + 1, 365)
     fname = f"climate_vertical_doy{doy:03}_hour00.nc"
 
-    with xr.open_dataset(climatology_path / fname, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+    with xr.open_dataset(climatology_path / fname, engine="h5netcdf", chunks=None, cache=False) as data:
         if variables is not None:
             loaded = data[variables].compute()
         else:
@@ -270,7 +270,7 @@ class E3SMS2SDataset(Dataset):
         tot_steps = 0
 
         for data_file in self.data_files:
-            with xr.open_dataset(data_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+            with xr.open_dataset(data_file, engine="h5netcdf", chunks=None, cache=False) as data:
                 # We need two input days, so we need to subtract one day.
                 n_steps = data.time.size - self.forecast_range[1]
                 time_steps[(tot_steps, tot_steps + n_steps)] = data_file
@@ -300,7 +300,7 @@ class E3SMS2SDataset(Dataset):
         A dictionary defining the lons and lat slices defining the target area.
         """
         inpt_file = next(iter(self.all_time_steps.values()))
-        with xr.open_dataset(inpt_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(inpt_file, engine="h5netcdf", chunks=None, cache=False) as data:
             lons = data.lon.data
             lats = data.lat.data
 
@@ -324,7 +324,7 @@ class E3SMS2SDataset(Dataset):
         The precipitation climatology field.
         """
         if isinstance(self._precip_climatology, Path):
-            with xr.open_dataset(precip_climatology, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+            with xr.open_dataset(precip_climatology, engine="h5netcdf", chunks=None, cache=False) as data:
                 self._precip_climatology = data.PRECT.data
         elif self._precip_climatology is None:
             precip_sum = None
@@ -332,7 +332,7 @@ class E3SMS2SDataset(Dataset):
             files = list(self.all_time_steps.values())
 
             for path in tqdm(files, desc="Calculating precipitation climatology"):
-                with xr.open_dataset(path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+                with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
                     precip = data.PRECT.data * 1e3 * 3.6e3
                     valid = np.isfinite(precip)
                     if precip_sum is None:
@@ -374,7 +374,7 @@ class E3SMS2SDataset(Dataset):
 
         forecast_range = self.rng.integers(*self.forecast_range)
 
-        with xr.open_dataset(input_file, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(input_file, engine="h5netcdf", chunks=None, cache=False) as data:
             data = data[
                 {
                     "time": [

@@ -144,7 +144,7 @@ def download_dynamic(
     for recs in merra_recs:
         data_combined = []
         for rec in recs:
-            with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+            with xr.open_dataset(rec.local_path, engine="h5netcdf", chunks=None, cache=False) as data:
                 vars = [
                     var for var in vars_req if var in data.variables
                 ]
@@ -264,7 +264,7 @@ def extract_merra_data(
                 try:
                     download_dynamic(year, month, day, output_path, domain)
                 except Exception as e:
-                    LOGGER.exception(f"Error processing day {d}: {e}")
+                    LOGGER.exception(f"Error processing day {day}: {e}")
                 finally:
                     progress.update(task_id, advance=1)
 
@@ -291,7 +291,7 @@ def download_static(
 
     all_data = []
     for rec in merra_recs:
-        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
+        with xr.open_dataset(rec.local_path, engine="h5netcdf", chunks=None, cache=False) as data:
             vars = [
                 var for var in vars_req if var in data.variables
             ]
