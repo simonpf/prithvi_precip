@@ -72,7 +72,7 @@ def extract_imerg_precip(
         flip = False
 
     for rec in recs:
-        with xr.open_dataset(rec.local_path) as data:
+        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
             data = data[["precipitation"]].load().transpose("time", "lat", "lon")
             data = data.rename(lat="latitude", lon="longitude")
         surface_precip = data.precipitation.data

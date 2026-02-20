@@ -144,7 +144,7 @@ def download_dynamic(
     for recs in merra_recs:
         data_combined = []
         for rec in recs:
-            with xr.open_dataset(rec.local_path) as data:
+            with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
                 vars = [
                     var for var in vars_req if var in data.variables
                 ]
@@ -291,7 +291,7 @@ def download_static(
 
     all_data = []
     for rec in merra_recs:
-        with xr.open_dataset(rec.local_path) as data:
+        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
             vars = [
                 var for var in vars_req if var in data.variables
             ]

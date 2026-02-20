@@ -60,7 +60,7 @@ def extract_merra_precip(
 
     all_data = []
     for rec in merra_recs:
-        with xr.open_dataset(rec.local_path) as data:
+        with xr.open_dataset(rec.local_path, engine=\"h5netcdf\", chunks=None, cache=False) as data:
             data = data[["PRECTOT"]].load().rename(PRECTOT="surface_precip")
             data = data.rename_dims(lat="latitude", lon="longitude").rename(lat="latitude", lon="longitude")
             data["surface_precip"].data *= 3.6e3
