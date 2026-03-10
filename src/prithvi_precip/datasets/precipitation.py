@@ -100,7 +100,6 @@ def _transform_data(
             targets = affine(targets[None], angle=0, translate=[0, 0], shear=0, scale=scale)[0]
         else:
             targets = {name: affine(tnsr[None], angle=0, translate=[0, 0], shear=0, scale=scale)[0] for name, tnsr in targets.items()}
-        inpt["static"][:2] = coords
 
     return inpt, targets
 
@@ -713,7 +712,9 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 output_file = self.output_files[output_indices[output_ind]]
                 with xr.open_dataset(self.training_data_path / output_file, engine="h5netcdf", chunks=None, cache=False) as data:
                     LOGGER.debug("Loading precip data from %s.", output_file)
-                    precip_s = torch.tensor(data.surface_precip.data.astype(np.float32))
+                    precip_s = torch.tensor(data.surface_precip.data.copy().astype(np.float32))
+                    if precip_s.ndim < 3:
+                        precip_s = precip_s[None]
 
                     if self.reference_data.startswith("era5"):
                         precip_s = 1e3 * precip_s

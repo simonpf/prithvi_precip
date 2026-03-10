@@ -534,7 +534,6 @@ class ObservationLoader(Dataset):
                 flip_h=flip_h,
                 scale=scale
             )
-
         return observations, meta_data
 
 
