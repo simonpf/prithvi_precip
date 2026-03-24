@@ -450,9 +450,7 @@ class ObservationLoader(Dataset):
         layer_ind = np.zeros(self.n_tiles, dtype=np.int64)
 
         try:
-            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data_file:
-
-                data = data_file.load().copy(deep=True)
+            with xr.open_dataset(path, engine="h5netcdf", chunks=None, cache=False) as data:
 
                 for row_ind in range(self.n_tiles[0]):
                     for col_ind in range(self.n_tiles[1]):
