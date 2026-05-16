@@ -1,0 +1,231 @@
+%% Version 6.1, 1 September 2021
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% amspaperV6.tex --  LaTeX-based instructional template paper for submissions to the 
+% American Meteorological Society
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% PREAMBLE
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Start with one of the following:
+% 1.5-SPACED VERSION FOR SUBMISSION TO THE AMS
+\documentclass{ametsocV6.1}
+
+% TWO-COLUMN JOURNAL PAGE LAYOUT---FOR AUTHOR USE ONLY
+% \documentclass[twocol]{ametsocV6.1}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% To be entered by author:
+
+%% May use \\ to break lines in title:
+
+\title{Prithvi-WxC P: Integrating Satellite Observations into an Atmospheric AI Foundation Model for Precipitation Forecasting
+
+
+  GPROF-IR: An Improved Single-Channel Infrared Precipitation Retrieval for Merged Satellite Precipitation Products}
+
+\usepackage{booktabs}
+
+%% Enter authors' names and affiliations as you see in the examples below.
+%
+%% Use \correspondingauthor{} and \thanks{} (\thanks command to be used for affiliations footnotes, 
+%% such as current affiliation, additional affiliation, deceased, co-first authors, etc.)
+%% immediately following the appropriate author.
+%
+%% Note that the \correspondingauthor{} command is NECESSARY.
+%% The \thanks{} commands are OPTIONAL.
+%
+%% Enter affiliations within the \affiliation{} field. Use \aff{#} to indicate the affiliation letter at both the
+%% affiliation and at each author's name. Use \\ to insert line breaks to place each affiliation on its own line.
+
+\authors{
+  Simon Pfreundschuh\aff{a}\correspondingauthor{Simon Pfreundschuh, simon.pfreundschuh@colostate.edu},
+  Christian D. Kummerow\aff{a},
+  Jackson Tan\aff{b, c},
+  George J. Huffman\aff{c}
+}
+
+\affiliation{
+  \aff{a}{Colorado State University, Fort Collins, USA}\\
+  \aff{b}{University of Maryland, Baltimore County, Baltimore, Maryland, USA} \\
+  \aff{c}{NASA Goddard Space Flight Center, Greenbelt, Maryland}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ABSTRACT
+%
+% Enter your abstract here
+% Abstracts should not exceed 250 words in length!
+%
+
+\abstract{%
+Current merged precipitation products such as IMERG, GSMAP, and CMORPH combine
+satellite-based estimates from passive microwave (PMW) and infrared (IR)
+observations. However, the fundamentally different information content of these
+sensors makes it challenging to produce consistent precipitation estimates, even
+for coincident observations. The resulting inconsistencies between PMW and IR
+retrievals can introduce artifacts in the temporal evolution of merged
+precipitation fields and lead to an overreliance on time-propagated PMW
+estimates. \\
+%
+Here, we introduce GPROF-IR, a novel IR precipitation retrieval that leverages
+state-of-the-art neural network techniques to improve precipitation estimates
+from single-channel IR observations. We demonstrate that the proposed
+convolutional neural network is able to leverage the temporal information in
+sequential half-hourly IR observations to improve precipitation estimates.
+GPROF-IR is specifically designed for integration into the upcoming release of
+the Integrated Multi-Satellite Retrieval for GPM (IMERG V08) and produces
+estimates that are climatologically consistent with the GPROF-NN PMW retrieval.
+\\
+%
+We evaluate GPROF-IR using independent, global reference measurements and
+demonstrate substantial and robust improvements over conventional IR retrievals.
+GPROF-IR provides lower mean squared error and higher correlation coefficient than
+IMERG V07 PMW estimates over continental land masses but remains below the accuracy
+of PMW precipitation estimates over sea surfaces and climate regimes with a greater
+influence from shallow precipitation. \\
+%
+By expoiting both spatial and temporal information content in geostationary IR
+observations, GPROF-IR establishes a new state of the art for single-channel IR
+precipitation retrievals. Its reliance on a single IR channel enables producing
+quasi-global precipitation estimates at half-hourly resolution from the year
+1998 onward, providing a consistent and accurate foundation for improving merged
+precipitation products.
+%
+}
+
+\begin{document}
+
+
+%% Necessary!
+\maketitle
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% SIGNIFICANCE STATEMENT/CAPSULE SUMMARY
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% If you are including an optional significance statement for a journal article or a required capsule summary for BAMS 
+% (see www.ametsoc.org/ams/index.cfm/publications/authors/journal-and-bams-authors/formatting-and-manuscript-components for details), 
+% please apply the necessary command as shown below:
+%
+% Significance Statement (all journals except BAMS)
+%
+\statement
+
+Producing global precipitation estimates at high temporal resolution from
+satellite observations requires the use of geostationary observations
+ to fill gaps between overpasses from passive microwave (PMW) sensors in low-earth
+orbits. Current global precipitation products use infrared (IR) window-channel
+observations that are available at half-hourly resolution from the year 1998
+onwards. However, since these observations are primarily sensitive to cloud-top
+properties, conventional IR-only precipitation algorithms provide only very
+crude precipitation estimates, which negatively affects the accuracy of global
+precipitation datasets.
+
+We propose a novel machine-learning-based IR retrieval that substantially
+improves the accuracy of IR-only precipitation estimates from geostationary
+observations. The retrieval is based on a convolutional neural network that
+leverages structural as well as temporal information in the IR imagery to
+provide more accurate precipitation estimates. Extensive validation against
+independent precipitation estimates demonstrates that proposed retrieval
+provides more accurate precipitation estimates than currently operational
+precipitation retrievals from dedicated PMW precipitation sensors over
+continental land masses. While the accuracy of the IR-only retrieval stays below
+that of PMW estimates over oceans and climate zones more strongly influence by
+shallow precipitation, the improvements compared to conventional IR-only
+algorithms are substantial and robust across various climate regimes.
+
+The algorithm presented here will be used to produce next generation global
+satellite precipitation datasets. Additionally, we make the algorithm openly
+available to the scientific community.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MAIN BODY OF PAPER
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\section{Introduction}
+\label{sec:intro}
+
+
+
+\section{Methods and Data}
+\label{sec:methods}
+
+\section{Results}
+\label{sec:results}
+
+
+\section{Summary and Conclusions}
+\label{sec:summary_and_conclusions}
+
+
+\clearpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ACKNOWLEDGMENTS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\acknowledgments
+
+The work of SP and CDK was supported by NASA grant 80NSSC22K0604.
+
+This study uses modified Copernicus Climate Change Service information. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.
+
+
+\datastatement
+
+
+The NOAA CPC 4-km gridded IR observations are available from \citet{ncep_cpc_mergir_v1}.
+
+The GPM 2BCMB data are available  from \citet{cmb_data}.
+
+The SatRain dataset is available from \citet{satrain_dataset}.
+
+The OceanRAIN data are available from \citet{ocean_rain_data}.
+
+The ERA5 data are available from \citet{c3s_era5_single_levels}.
+
+The GPCP data are available from \citet{gpcp_v33_precip}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% APPENDIXES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% If only one appendix, use
+
+%\appendix
+
+%% If more than one appendix, use \appendix[<letter>], e.g.,
+
+%\appendix[A] 
+
+%% Appendix title is necessary! For appendix title:
+
+%\appendixtitle{Title of Appendix}
+
+%%% Appendix section numbering (note, skip \section and begin with \subsection)
+%
+% \subsection{First primary heading}
+
+% \subsubsection{First secondary heading}
+
+% \paragraph{First tertiary heading}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% REFERENCES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\bibliographystyle{ametsocV6}
+\bibliography{references}
+
+
+\end{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% END OF AMSPAPERV6.1.TEX
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
