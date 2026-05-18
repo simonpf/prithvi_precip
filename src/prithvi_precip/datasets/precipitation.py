@@ -304,7 +304,7 @@ class DirectPrecipForecastDataset(MERRAInputData):
         files = []
 
         prefix = f"{reference_data.lower()}"
-        pattern = f"{self.reference_data.lower()}_{accumulation_period}/**/{prefix}*.nc"
+        pattern = f"{reference_data.lower()}_{accumulation_period}/**/{prefix}*.nc"
         date_pattern = f"{reference_data.lower()}_%Y%m%d%H%M%S.nc"
 
         for path in sorted(list(training_data_path.glob(pattern))):

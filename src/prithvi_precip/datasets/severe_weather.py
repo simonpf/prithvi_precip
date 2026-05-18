@@ -120,6 +120,11 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
+        self.precip_times, self.precip_files = self.find_precip_files(
+            self.training_data_path,
+            reference_data="imerg",
+            accumulation_period=3
+        )
 
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
@@ -183,7 +188,7 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             output_files += list(self.output_files[out_inds])
         output_files = set(output_files)
 
-        all_files = input_files.union(output_files)
+        all_files = input_files.union(output_files).union(set(self.precip_files))
 
         for path in all_files:
             rel_path = Path(path)
@@ -555,7 +560,6 @@ class AutoregressiveSevereWeatherForecastDataset(DirectSevereWeatherForecastData
                 climates.append(torch.tensor(load_and_interp_climatology(output_time, self.data_path)))
 
             if output_time in available_times:
-
                 output_ind = available_times.index(output_time)
                 output_file = self.output_files[output_indices[output_ind]]
                 targets_step = self.load_severe_weather_data(output_file)
@@ -566,7 +570,17 @@ class AutoregressiveSevereWeatherForecastDataset(DirectSevereWeatherForecastData
                 for name in ["tornado", "hail", "wind", "severe"]:
                     targets.setdefault(name, []).append(empty)
 
+            if output_time in self.precip_times:
+                precip_ind = self.precip_times.searchsorted(output_time)
+                precip_file = self.precip_files[precip_ind]
+                with xr.open_dataset(self.training_data_path / precip_file, engine="h5netcdf", chunks=None, cache=False) as data:
+                    LOGGER.debug("Loading precip data from %s.", precip_file)
+                    precip_step = torch.tensor(data.surface_precip.data.astype(np.float32))
+                precip.append(precip_step[None])
+            else:
                 precip.append(torch.nan * torch.zeros((1, 360, 576)))
+
+        targets["surface_precip"] = precip
 
         if 0 < len(climates):
             x["climate"] = transform(torch.stack(climates, 0))
