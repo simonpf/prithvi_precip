@@ -123,7 +123,9 @@ class DirectPrecipForecastDataset(MERRAInputData):
             validation: bool = False,
             local_data: Optional[Path] = None,
             augment: bool = False,
-            source: str = "merra2"
+            source: str = "merra2",
+            start_time: Optional[np.datetime64] = None,
+            end_time: Optional[np.datetime64] = None
     ):
         """
         Args:
@@ -174,12 +176,23 @@ class DirectPrecipForecastDataset(MERRAInputData):
         self.source = source
 
         self.input_times, self.input_files = find_input_files(self.training_data_path, source=source)
-        self.output_times, self.output_files = self.find_precip_files(
+        output_times, output_files = self.find_precip_files(
             self.training_data_path,
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
         )
-
+        if start_time is None:
+            start_time = output_times.min()
+        else:
+            start_time = np.datetime64(start_time)
+        if end_time is None:
+            end_time = output_times.max()
+        else:
+            end_time = np.datetime64(end_time)
+        mask = (start_time <= output_times) * (output_times <= end_time)
+        self.output_times = output_times[mask]
+        self.output_files = output_files[mask]
+            
         self._pos_sig = None
         self.input_indices, self.output_indices = self.calculate_valid_samples()
         self.rng = np.random.default_rng(seed=42)
@@ -534,7 +547,9 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             validation: bool = False,
             local_data: Optional[Path] = None,
             augment: bool = False,
-            source: str = "merra2"
+            source: str = "merra2",
+            start_time: Optional[np.datetime64] = None,
+            end_time: Optional[np.datetime64] = None
     ):
         """
         Args:
@@ -554,6 +569,8 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
                 typically be node-local memory that can be accessed rapidly.
             augment: Whether or not to augment the input data using random zonal rolls and meridional flips.
             source: Name of the input dataset.
+            start_time: Optional start time to limit the training data to.
+            end_time: Optional end time to limit the training data to.
         """
         super().__init__(
             training_data_path=training_data_path,
@@ -568,7 +585,9 @@ class AutoregressivePrecipForecastDataset(DirectPrecipForecastDataset):
             validation=validation,
             local_data=local_data,
             augment=augment,
-            source=source
+            source=source,
+            start_time=start_time,
+            end_time=end_time
         )
         scaling_factors = Path(scaling_factors)
         if not scaling_factors.exists():
