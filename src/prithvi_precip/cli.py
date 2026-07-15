@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from prithvi_precip.data import (
-    geos, imerg, imerg_day, merra2, merra2_precip, era5_precip, mrms, stage4, spc
+    geos, imerg, imerg_day, merra2, merra2_precip, era5_precip, mrms, stage4, spc, inmet
 )
 from prithvi_precip.obs import cpcir, goes, gpm, gridsat, gridsat_goes
 
@@ -43,6 +43,7 @@ prithvi_precip.command(name="extract_geos_forecast")(geos.download_geos_forecast
 prithvi_precip.command(name="extract_geos_data")(geos.extract_geos_data)
 prithvi_precip.command(name="extract_geos_precip")(geos.extract_geos_precip_data)
 prithvi_precip.command(name="extract_mrms_precip")(mrms.extract_precip)
+prithvi_precip.command(name="extract_inmet_precip")(inmet.extract_precip)
 prithvi_precip.command(name="extract_stage4_precip")(stage4.extract_precip)
 prithvi_precip.command(name="extract_severe_weather")(spc.extract_training_data)
 prithvi_precip.command(name="extract_cpcir_obs")(cpcir.extract_cpcir_observations)

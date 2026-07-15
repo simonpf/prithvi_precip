@@ -135,6 +135,7 @@ class ObservationLoader(Dataset):
         self.freq_min = 1.0
         self.freq_max = 30e3
         self._obs_regexp = None
+        self._drop_obs_regexp = None
 
 
     @property
@@ -145,6 +146,13 @@ class ObservationLoader(Dataset):
     def obs_regexp(self, regexp: str) -> None:
         self._obs_regexp = re.compile(regexp)
 
+    @property
+    def drop_obs_regexp(self) -> Union[re.Pattern, None]:
+        return self._drop_obs_regexp
+
+    @drop_obs_regexp.setter
+    def drop_obs_regexp(self, regexp: str) -> None:
+        self._drop_obs_regexp = re.compile(regexp)
 
     def copy_files(
             self,
@@ -465,11 +473,19 @@ class ObservationLoader(Dataset):
                                 obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
                                 obs_ids = data[obs_ids].data
                                 obs_ids[obs_ids < 0] += 256
-                                names = [self.obs_vars[obs_id] for obs_id in obs_ids if self.obs_regexp.match(self.obs_vars[obs_id])]
                                 inds = [ind for ind, obs_id in enumerate(obs_ids) if self.obs_regexp.match(self.obs_vars[obs_id])]
                                 inds = np.array(inds)
                                 if len(inds) == 0:
                                     continue
+                            elif self.drop_obs_regexp is not None:
+                                obs_ids = f"obs_id_{row_ind:02}_{col_ind:02}"
+                                obs_ids = data[obs_ids].data
+                                obs_ids[obs_ids < 0] += 256
+                                inds = [ind for ind, obs_id in enumerate(obs_ids) if not self.drop_obs_regexp.match(self.obs_vars[obs_id])]
+                                inds = np.array(inds)
+                                if len(inds) == 0:
+                                    continue
+                                    
                             else:
                                 if randomize:
                                     inds = np.random.permutation(data[obs_name].shape[0])

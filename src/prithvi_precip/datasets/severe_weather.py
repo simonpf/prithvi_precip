@@ -177,18 +177,20 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             training_local
         )
         input_files = []
-        input_times = []
         for inds in local_input_indices:
             input_files += list(self.input_files[inds])
         input_files = set(input_files)
 
         output_files = []
+        output_times = []
         for inds in local_output_indices:
             out_inds = [ind for ind in inds if 0 <= ind]
             output_files += list(self.output_files[out_inds])
+            output_times += list(self.output_times[out_inds])
+            
         output_files = set(output_files)
-
-        all_files = input_files.union(output_files).union(set(self.precip_files))
+        precip_files = [path for time, path in zip(self.precip_times, self.precip_files) if time in output_times]
+        all_files = input_files.union(output_files).union(set(precip_files))
 
         for path in all_files:
             rel_path = Path(path)
@@ -221,6 +223,11 @@ class DirectSevereWeatherForecastDataset(DirectPrecipForecastDataset):
             self.training_data_path,
             reference_data=self.reference_data,
             accumulation_period=self.accumulation_period
+        )
+        self.precip_times, self.precip_files = self.find_precip_files(
+            self.training_data_path,
+            reference_data="imerg_3",
+            accumulation_period=3
         )
 
         # Filter input and output times to ensure all processes have the same number of samples.

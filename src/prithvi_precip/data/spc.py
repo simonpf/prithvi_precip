@@ -147,9 +147,9 @@ def extract_severe_weather(
         mask = (start_time <= wind.time) * (wind.time < end_time)
         wind = wind[mask]
 
-        tornado_mask = -1 <= tornado.mag
-        hail_mask = -1 <= hail.mag
-        wind_mask = 0 <= wind.mag
+        tornado_mask = 0 <= tornado.mag
+        hail_mask = 1 <= hail.mag
+        wind_mask = 58 <= wind.mag
 
         tornado = tornado.loc[tornado_mask]
         hail = hail.loc[hail_mask]
@@ -188,7 +188,7 @@ def extract_severe_weather(
         })
 
         date = to_datetime(start_time)
-        fname = date.strftime(f"not_so_severe_weather_{accumulate}/%Y/%m/%d/severe_weather_%Y%m%d%H%M.nc")
+        fname = date.strftime(f"severe_weather_{accumulate}/%Y/%m/%d/severe_weather_%Y%m%d%H%M.nc")
         output_file = output_path / fname
         output_file.parent.mkdir(exist_ok=True, parents=True)
         encoding = {

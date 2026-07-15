@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import warnings
 
 import numpy as np
-from scipy.stats import binned_statistic_dd
+from scipy.stats import binned_statistic_dd, binned_statistic_2d
 from tqdm import tqdm
 import xarray as xr
 
@@ -849,3 +849,191 @@ class ACC(CorrelationCoef):
             d_pred[valid],
             d_trg[valid]
         )
+
+
+class SpatialCorrelationCoef(QuantificationMetric):
+    """
+    The linear correlation coefficient between predictions and target values.
+
+    .. math::
+
+      \\text{Correlation coeff.} = \\mathbf{E}\\frac{
+      (y_\\text{pred} - \\mu_{y_\\text{pred}})(y_\\text{target} - \\mu{y_\\text{target})}
+      }{
+       \\sigma_{y_\\text{pred}} \sigma_{y_\\text{target}}
+      }
+
+
+    where the mean is calculated over all results passed to the 'compute' method for
+    which the target values are finite and :math:`\\mu` and :math:`\\sigma` are used to denote
+    the mean and standard deviations of the distributions of :math:`y_\text{pred}` and
+    :math:`y_\\text{target}`.
+    """
+
+    def __init__(self, resolution=10.0):
+
+        self.lon_bins = np.arange(-180, 180 + 1e-3, resolution)
+        self.lat_bins = np.arange(-90, 90 + 1e-3, resolution)
+        buffer_shape = (self.lat_bins.size - 1, self.lon_bins.size - 1)
+
+        super().__init__(
+            buffers={
+                "x_sum": (buffer_shape, np.float64),
+                "x2_sum": (buffer_shape, np.float64),
+                "y_sum": (buffer_shape, np.float64),
+                "y2_sum": (buffer_shape, np.float64),
+                "xy_sum": (buffer_shape, np.float64),
+                "counts": (buffer_shape, np.float64),
+            }
+        )
+
+    def update(
+            self,
+            lons: np.ndarray,
+            lats: np.ndarray,
+            time: np.ndarray,
+            prediction: np.ndarray,
+            target: np.ndarray,
+    ) -> None:
+        """
+        Update metric values with given prediction.
+
+        Args:
+            lons: The longitude coordinates of the results.
+            lats: The latitude coordinates of the results.
+            time: The time of the results.
+            prediction: An np.ndarray containing the predicted values.
+            target: An np.ndarray containing the reference values.
+        """
+        pred = prediction
+        valid = np.isfinite(target)
+
+        pred = pred[valid]
+        target = target[valid]
+        lats = lats[valid]
+        lons = lons[valid]
+
+        with self.lock:
+            self.x_sum += binned_statistic_2d(lats, lons, pred, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.x2_sum += binned_statistic_2d(lats, lons, pred ** 2, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.y_sum += binned_statistic_2d(lats, lons, target, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.y2_sum += binned_statistic_2d(lats, lons, target ** 2, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.xy_sum += binned_statistic_2d(lats, lons, pred * target, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.counts += binned_statistic_2d(lats, lons, pred * target, bins=(self.lat_bins, self.lon_bins), statistic="count")[0]
+
+
+    def compute(self) -> xr.Dataset:
+        """
+        Calculate the bias for all results passed to this metric object.
+
+        Return:
+            An xarray.Dataset containing a single, scalar variable 'bias' or 'bias_{name}'.
+
+        """
+        with np.errstate(invalid='ignore'):
+            x_mean = self.x_sum / self.counts
+            x2_mean = self.x2_sum / self.counts
+            x_sigma = np.sqrt(x2_mean - x_mean**2)
+            y_mean = self.y_sum / self.counts
+            y2_mean = self.y2_sum / self.counts
+            y_sigma = np.sqrt(y2_mean - y_mean**2)
+            xy_mean = self.xy_sum / self.counts
+            corr = (xy_mean - x_mean * y_mean) / (x_sigma * y_sigma)
+
+        lats = 0.5 * (self.lat_bins[1:] + self.lat_bins[:-1])
+        lons = 0.5 * (self.lon_bins[1:] + self.lon_bins[:-1])
+
+        corr = xr.Dataset({
+            "latitude": (("latitude",), lats),
+            "longitude": (("longitude",), lons),
+            "correlation_coef_dist": (("latitude", "longitude"), corr)
+        })
+        corr.correlation_coef_dist.attrs["full_name"] = "Correlation coeff."
+        corr.correlation_coef_dist.attrs["unit"] = ""
+        return corr
+
+
+class SpatialMSE(QuantificationMetric):
+    """
+    The mean-squared error calculated as the mean value of the squared difference between
+    prediction and target values:
+
+    .. math::
+
+      \\text{MSE} = (\\mathbf{E}\{y_\\text{pred} - y_\\text{target}\})^2
+
+    where mean is calculated over all results passed to the 'compute' method for
+    which the target values are finite.
+    """
+
+    def __init__(self, resolution: float = 10.0):
+
+        self.lon_bins = np.arange(-180, 180 + 1e-3, resolution)
+        self.lat_bins = np.arange(-90, 90 + 1e-3, resolution)
+        buffer_shape = (self.lat_bins.size - 1, self.lon_bins.size - 1)
+
+        super().__init__(
+            buffers={
+                "tot_sq_error": ((buffer_shape), np.float64),
+                "target": ((buffer_shape), np.float64),
+                "target2": ((buffer_shape), np.float64),
+                "counts": ((buffer_shape), np.float64),
+            }
+        )
+
+    def update(
+            self,
+            lons: np.ndarray,
+            lats: np.ndarray,
+            time: np.ndarray,
+            prediction: np.ndarray,
+            target: np.ndarray,
+    ) -> None:
+        """
+        Update metric values with given prediction.
+
+        Args:
+            lons: The longitude coordinates of the results.
+            lats: The latitude coordinates of the results.
+            prediction: An np.ndarray containing the predicted values.
+            target: An np.ndarray containing the reference values.
+        """
+        pred = prediction
+        valid = np.isfinite(target)
+        pred = pred[valid]
+        target = target[valid]
+        lons = lons[valid]
+        lats = lats[valid]
+
+        with self.lock:
+            self.target += binned_statistic_2d(lats, lons, target, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.target2 += binned_statistic_2d(lats, lons, target ** 2, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.tot_sq_error += binned_statistic_2d(lats, lons, (pred - target) ** 2, bins=(self.lat_bins, self.lon_bins), statistic="sum")[0]
+            self.counts += binned_statistic_2d(lats, lons, pred, bins=(self.lat_bins, self.lon_bins), statistic="count")[0]
+
+
+    def compute(self) -> xr.Dataset:
+        """
+        Calculate the MSE for all results passed to this metric object.
+
+        Return:
+            An xarray.Dataset containing scalar variables 'mse' and 'nmse' representing
+            the MSE and normalized MSE calculated over all results passed to this metric object.
+        """
+        lats = 0.5 * (self.lat_bins[1:] + self.lat_bins[:-1])
+        lons = 0.5 * (self.lon_bins[1:] + self.lon_bins[:-1])
+        mean = (self.target / self.counts)
+        var = (self.target2 / self.counts - mean ** 2)
+        mse = (self.tot_sq_error / self.counts)
+        with np.errstate(invalid='ignore'):
+            mse = xr.Dataset({
+                "latitude": (("latitude",), lats),
+                "longitude": (("longitude",), lons),
+                "nmse_dist": (("latitude", "longitude"), 100.0 * mse / var),
+                "mse_dist": (("latitude", "longitude"), mse),
+            })
+        mse.mse_dist.attrs["full_name"] = "MSE"
+        mse.mse_dist.attrs["unit"] = "(mm h^{-1})^2"
+        mse.nmse_dist.attrs["full_name"] = "Normalized MSE"
+        mse.nmse_dist.attrs["unit"] = "%"
+        return mse

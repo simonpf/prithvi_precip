@@ -182,20 +182,28 @@ class DirectForecastLoader:
 
         if self.obs_loader is not None:
             obs = []
-            obs_meta = []
+            meta = []
             for time_ind, time in enumerate(input_times):
-                obs_t, meta_t = self.obs_loader.load_observations(time, offset=len(input_times) - time_ind - 1)
-                obs.append(obs_t)
-                obs_meta.append(meta_t)
-
+                obs_t = []
+                meta_t = []
+                for step in range(-self.input_time + 3, 1, 3):
+                    print(step)
+                    obs_s, meta_s = self.obs_loader.load_observations(
+                        time + np.timedelta64(step, "h"),
+                        offset=step // 3,
+                    )
+                    obs_t.append(obs_s)
+                    meta_t.append(meta_s)
+                obs.append(torch.cat(obs_t, 2))
+                meta.append(torch.cat(meta_t, 2))
             obs = torch.stack(obs, 0)
             obs_mask = obs < -1.4
-            obs = torch.nan_to_num(obs, nan=-3.0)
-            obs_meta = torch.stack(obs_meta, 0)
+            obs = torch.nan_to_num(obs, nan=-1.5)
+            meta = torch.stack(meta, 0)
 
             input_data["obs"] = torch.repeat_interleave(obs[None], step_end - step_start, 0)
             input_data["obs_mask"] = torch.repeat_interleave(obs_mask[None], step_end - step_start, 0)
-            input_data["obs_meta"] = torch.repeat_interleave(obs_meta[None], step_end - step_start, 0)
+            input_data["obs_meta"] = torch.repeat_interleave(meta[None], step_end - step_start, 0)
 
         return init_time, valid_times, input_data
 

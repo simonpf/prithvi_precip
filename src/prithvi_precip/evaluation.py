@@ -27,7 +27,9 @@ from prithvi_precip.metrics import (
     Metric,
     MSE,
     ProbabilisticQuantificationMetric,
-    SEEPS
+    SEEPS,
+    SpatialCorrelationCoef,
+    SpatialMSE
 )
 
 from .utils import get_date, to_datetime64
@@ -47,13 +49,16 @@ class Evaluator:
             self,
             reference_data: Path,
             forecasts: Dict[str, Path],
-            min_rqi: float = 0.5
+            min_rqi: float = 0.5,
+            use_precip_class: bool = True,
+            clim: Optional[xr.Dataset] = None
     ):
         """
         Args:
              reference_data: Path pointing to the directory containing the reference data.
              forecasts: A dictionary mapping forecast names to the base folder containing the forecast results.
              min_rqi: The minimum RQI to require for MRMS precipitation estimates.
+             use_precip_class: Whether or not to use the precip class to evaluate the SEEPS score.
         """
         self.reference_data = Path(reference_data)
         self.reference_files = {
@@ -70,8 +75,10 @@ class Evaluator:
         self.all_times = sorted(list(all_times))
         self.ref_times = sorted(list(self.reference_files))
         self.min_rqi = min_rqi
+        self.use_precip_class = use_precip_class
+        self.clim = clim
 
-        self._metric_classes = [Bias, MSE, CorrelationCoef, CRPS, SEEPS]
+        self._metric_classes = [Bias, MSE, CorrelationCoef, CRPS, SEEPS, SpatialCorrelationCoef, SpatialMSE]
         self._metrics = {}
 
     def __len__(self) -> int:
@@ -96,6 +103,9 @@ class Evaluator:
             for metric in metrics:
                 if hasattr(metric, "calculate_climatology"):
                     metric.calculate_climatology(sorted(list(self.reference_files.values())))
+                    if self.clim is not None:
+                        metric.climatology = self.clim
+                
             self._metrics[(name, lead_time)] = metrics
         return self._metrics[(name, lead_time)]
 
@@ -175,15 +185,14 @@ class Evaluator:
                                                 metric.update(lons, lats, to_datetime64(valid_time), sp_prob, sp_ref, taus=tau)
                                             else:
                                                 metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
-                                        #elif isinstance(metric, SEEPS):
-                                        #    #if "precip_class" in results_t:
-                                        #    #    precip_class = np.nan_to_num(results_t.precip_class.data, nan=-1.0)
-                                        #    #    metric.update(lons, lats, to_datetime64(valid_time), precip_class, sp_ref)
-                                        #    #else:
-                                        #    #    metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
-                                        #    metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
-                                        #else:
-                                        metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+                                        elif isinstance(metric, SEEPS):
+                                            if "precip_class" in results_t and self.use_precip_class:
+                                                precip_class = np.nan_to_num(results_t.precip_class.data, nan=-1.0)
+                                                metric.update(lons, lats, to_datetime64(valid_time), precip_class, sp_ref)
+                                            else:
+                                                metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
+                                        else:
+                                            metric.update(lons, lats, to_datetime64(valid_time), sp, sp_ref)
 
                 with xr.open_dataset(self.reference_files[time], engine="h5netcdf", chunks=None, cache=False) as ref_persist_file:
                     results_ref = ref_persist_file.load().copy(deep=True)
@@ -379,12 +388,17 @@ class Evaluator:
             results = {}
             lead_time = timedelta(hours=3 * step)
             init_time = valid_time - lead_time
-            norm = LogNorm(1e-1, 20)
-            levels = np.logspace(-1, 1, 11)
+            norm = LogNorm(1e-1, 100)
+            levels = np.logspace(-1, 2, 21)
 
             for fcst, res_files in self.result_files.items():
                 with xr.open_dataset(res_files[init_time], engine="h5netcdf", chunks=None, cache=False) as data:
-                    data = data.sel(valid_time=valid_time).compute()
+                    time_mask = (
+                        (np.datetime64(valid_time) <= data.valid_time.data) *
+                        (data.valid_time.data < np.datetime64(valid_time + timedelta(hours=6)))
+                    )
+
+                    data = data.sel(valid_time=time_mask).compute().mean("valid_time")
                 results[fcst] = data
 
             tax = fig.add_subplot(gs[step_ind, 0])
@@ -392,23 +406,48 @@ class Evaluator:
             tax.text(0, 0, s=f"Lead Time = {step * 3} h", rotation=90, ha="center", va="center")
             tax.set_ylim(-2, 2)
 
+
             for ind, (name, res) in enumerate(results.items()):
 
                 # Plot reference
                 if step_ind == 0:
-                    with xr.open_dataset(self.reference_files[valid_time], engine="h5netcdf", chunks=None, cache=False) as ref_data:
-                        results_ref = ref_data.load().copy(deep=True)
-                    sp_ref = results_ref.surface_precip.data
+
+                    ref_acc = []
+                    for step in range(2):
+                        with xr.open_dataset(
+                                self.reference_files[valid_time + timedelta(hours=step * 3)],
+                                engine="h5netcdf",
+                                chunks=None,
+                                cache=False
+                        ) as ref_data:
+                            results_ref = ref_data.load().copy(deep=True)
+                            ref_acc.append(results_ref)
+                    results_ref = xr.concat(ref_acc, dim="time")
+
+                    sp_ref = results_ref.mean("time").surface_precip.data
+                    sp_ref[sp_ref < 0] = np.nan
+
                     if "radar_quality_index" in results_ref:
-                        rqi = results_ref.radar_quality_index.data
+                        rqi = results_ref.mean("time").radar_quality_index.data
                     else:
                         rqi = np.ones_like(sp_ref)
 
-                    lat_mask = np.isfinite(sp_ref).any(-1)
-                    lon_mask = np.isfinite(sp_ref).any(-2)
+                    if bounds is None:
+                        lat_mask = np.isfinite(sp_ref).any(-1)
+                        lon_mask = np.isfinite(sp_ref).any(-2)
+                    else:
+                        lon_min, lat_min, lon_max, lat_max = bounds
+                        lat_mask = (
+                            ((lat_min - 1.0) < results_ref.latitude.data) * (results_ref.latitude.data < (lat_max + 1.0))
+                        )
+                        lon_mask = (
+                            ((lon_min - 1.0) < results_ref.longitude.data) * (results_ref.longitude.data < (lon_max + 1.0))
+                        )
+
                     sp_ref = sp_ref[..., lat_mask, :][..., lon_mask]
                     rqi = rqi[..., lat_mask, :][..., lon_mask]
                     sp_ref[rqi < 0.5] = np.nan
+                    sp_ref[np.isnan(rqi)] = np.nan
                     lons = results_ref.longitude.data[lon_mask]
                     lats = results_ref.latitude.data[lat_mask]
 
@@ -416,19 +455,20 @@ class Evaluator:
                     seeps.calculate_climatology(sorted(list(self.reference_files.values())))
                     clim = seeps.climatology
                     hour = valid_time.hour
-                    clim = clim.interp(hour=hour, longitude=lons, latitude=lats)
+                    month = valid_time.month
+                    clim = clim.interp(month=month, hour=hour, longitude=lons, latitude=lats)
 
                     sp_ref = np.maximum(sp_ref, 1e-3)
                     ax = fig.add_subplot(gs[-2, ind + 1], projection=crs)
                     m = ax.contourf(lons, lats, sp_ref, norm=norm, levels=levels, extend="both")
 
                     spt = clim.surface_precip_second_tercile.data
-                    #clss = np.zeros_like(sp_ref)
-                    #clss[sp_ref < seeps.dry_threshold] = 0
-                    #clss[seeps.dry_threshold <= sp_ref] = 1
-                    #clss[spt <= sp_ref] = 2
-                    #lvls = np.arange(3) + 0.5
-                    #ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+                    clss = np.zeros_like(sp_ref)
+                    clss[sp_ref < seeps.dry_threshold] = 0
+                    clss[seeps.dry_threshold <= sp_ref] = 1
+                    clss[spt <= sp_ref] = 2
+                    lvls = np.arange(3) + 0.5
+                    ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
 
                     ax.scatter(-99.5, 30.02, marker="x", s=20, c="coral")
                     ax.coastlines()
@@ -454,15 +494,17 @@ class Evaluator:
                 sp = np.maximum(res.surface_precip.data[lat_mask][..., lon_mask], 1e-3)
                 ax.contourf(lons, lats, sp, norm=m.norm, levels=levels, extend="both")
                 ax.scatter(-99.5, 30.02, marker="x", s=20, c="coral")
-                #if "precip_class" in res:
-                #    clss = res.precip_class.data[lat_mask][..., lon_mask]
-                #else:
-                #    clss = np.zeros_like(sp)
-                #    clss[sp < seeps.dry_threshold] = 0
-                #    clss[seeps.dry_threshold <= sp] = 1
-                #    clss[spt <= sp] = 2
-                #lvls = np.arange(3) + 0.5
-                #ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
+                
+               
+                if "precip_class" in res:
+                    clss = res.precip_class.data[lat_mask][..., lon_mask]
+                else:
+                    clss = np.zeros_like(sp)
+                    clss[sp < seeps.dry_threshold] = 0
+                    clss[seeps.dry_threshold <= sp] = 1
+                    clss[spt <= sp] = 2
+                lvls = np.arange(3) + 0.5
+                ax.contour(lons, lats, clss, levels=lvls, colors="grey", linestyles=[":", "--"])
 
                 #axs[ind + 1].contour(lons, lats, sp_ref, norm=m.norm, levels=levels, colors="w")
                 valid = np.isfinite(sp) * np.isfinite(sp_ref)
@@ -589,7 +631,8 @@ class Evaluator:
             self,
             index: int,
             panel_width: float = 5.0,
-            names: Optional[List] = None
+            names: Optional[List] = None,
+            no_crps: Optional[List] = None
     ):
         """
         Like 'animate_results' but only displays the results
@@ -673,14 +716,22 @@ class Evaluator:
         return ani
 
 
-    def plot_stats(self, labels: Optional[List[str]] = None):
+    def plot_stats(
+            self,
+            labels: Optional[List[str]] = None,
+            no_crps: Optional[List] = None,
+            plot_persistence: bool = False
+    ):
+
+        if no_crps is None:
+            no_crps = []
 
         results = self.get_results()
 
         from matplotlib.gridspec import GridSpec
 
-        fig = plt.figure(figsize=(18, 5))
-        gs = GridSpec(2, 4, height_ratios=[1.0, 0.3])
+        fig = plt.figure(figsize=(15, 4))
+        gs = GridSpec(2, 4, height_ratios=[1.0, 0.2], wspace=0.25)
 
         names = list(results.keys())
         if labels is None:
@@ -688,43 +739,54 @@ class Evaluator:
 
         ax = fig.add_subplot(gs[0, 0])
         handles = []
-        for name, label in zip(names, labels):
+        for ind, (name, label) in enumerate(zip(names, labels)):
+            if not plot_persistence and name == "persistence":
+                continue
             lead_time = results[name].lead_time
-            handles += ax.plot(lead_time, results[name].nmse, label=label)
-        ax.set_title("(a) Normalized MSE")
+            handles += ax.plot(lead_time, results[name].bias, label=label, c=f"C{ind + 1}")
+        ax.set_title("(a) Bias")
         ax.set_xlabel("Lead time [h]")
-        ax.set_ylabel("NMSE [%]")
+        ax.set_ylabel("Bias [%]")
+        ax.set_xlim(0, 96)
+        ax.set_ylim(-50, 50)
+        ax.grid()
+
+        ax = fig.add_subplot(gs[0, 1])
+        handles = []
+        for ind, (name, label) in enumerate(zip(names, labels)):
+            if not plot_persistence and name == "persistence":
+                continue
+            lead_time = results[name].lead_time
+            handles += ax.plot(lead_time, 10 * np.sqrt(results[name].nmse), label=label, c=f"C{ind + 1}")
+        ax.set_title("(b) Normalized RMSE")
+        ax.set_xlabel("Lead time [h]")
+        ax.set_ylabel("NRMSE [%]")
         ax.set_xlim(0, 96)
         ax.set_ylim(0, 150)
         ax.grid()
 
-        ax = fig.add_subplot(gs[0, 1])
-        for name, label in zip(names, labels):
+        ax = fig.add_subplot(gs[0, 2])
+        for ind, (name, label) in enumerate(zip(names, labels)):
+            if not plot_persistence and name == "persistence":
+                continue
             lead_time = results[name].lead_time
-            ax.plot(lead_time, results[name].correlation_coef, label=label)
+            ax.plot(lead_time, results[name].correlation_coef, label=label, c=f"C{ind + 1}")
         ax.set_xlim(0, 96)
-        ax.set_title("(b) Correlation Coefficient")
+        ax.set_title("(c) Correlation Coefficient")
         ax.set_xlabel("Lead time [h]")
         ax.set_ylabel("Correlation Coef.")
         ax.set_xlim(0, 96)
         ax.set_ylim(0, 1)
         ax.grid()
 
-        ax = fig.add_subplot(gs[0, 2])
-        for name, label in zip(names, labels):
-            lead_time = results[name].lead_time
-            ax.plot(lead_time, results[name].seeps, label=label)
-        ax.set_xlim(0, 96)
-        ax.set_title("(c) SEEPS")
-        ax.set_xlabel("Lead time [h]")
-        ax.set_ylabel("SEEPS")
-        ax.set_ylim(0, 1)
-        ax.grid()
-
         ax = fig.add_subplot(gs[0, 3])
-        for name, label in zip(names, labels):
+        for ind, (name, label) in enumerate(zip(names, labels)):
+            if not plot_persistence and name == "persistence":
+                continue
+            if name in no_crps:
+                continue
             lead_time = results[name].lead_time
-            ax.plot(lead_time, results[name].crps, label=label)
+            ax.plot(lead_time, results[name].crps, label=label, c=f"C{ind + 1}")
         ax.set_xlim(0, 96)
         ax.set_title("(d) CRPS")
         ax.set_xlabel("Lead time [h]")
